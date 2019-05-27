@@ -1,1 +1,0 @@
-# lib-quectel-bg96
