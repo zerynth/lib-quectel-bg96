@@ -305,15 +305,17 @@ def fix():
     """
 .. function:: fix()
    
-    Return a tuple of 8 elements:
+    Return a tuple of 10 elements:
 
         * latitude in decimal format (-89.9999 - 89.9999)
         * longitude in decimal format (-179.9999 - 179.9999)
         * altitude in meters
         * speed in Km/h
         * course over ground as degrees from true north
-        * horizontal dilution of precision (0.5 - 99.9)
         * number of satellites for this fix
+        * horizontal dilution of precision (0.5 - 99.9)
+        * Not supported
+        * Not supported
         * UTC time as a tuple (yyyy,MM,dd,hh,mm,ss)
 
     The function return None if a fix can't be obtained.

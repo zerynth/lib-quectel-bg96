@@ -181,7 +181,7 @@ int _gs_poweron(){
     vosThSleep(TIME_U(800,MILLIS));  // >= 500ms
     printf("PWR 1\n");
     vhalPinWrite(gs.poweron,1);
-    for(i=0;i<50;i++){
+    for(i=0;i<150;i++){
         if(vhalPinRead(gs.status)) {
             //status at 1, exit
             printf("STA 1\n");
@@ -223,7 +223,7 @@ int _gs_wait_for_ok(int timeout){
  * @brief Read a line from the module
  *
  * Lines are saved into gs.buffer and null terminated. The number of bytes read 
- * is saved in gs.buffer and returned. The timeout is implemented with a 50 milliseconds
+is * is saved in gs.buffer and returned. The timeout is implemented with a 50 milliseconds
  * polling strategy. TODO: change when the serial driver will support timeouts
  *
  * @param[in]   timeout     the number of milliseconds to wait for a line
@@ -445,6 +445,9 @@ int _gs_parse_command_arguments(uint8_t *buf, uint8_t *ebuf, const char*fmt,...)
                 if(!pms) goto exit;
                 ret++;
             break;
+            case 'S':
+                if(*pms == '\"') pms++;
+                if(*pme == '\"') pme--;
             case 's':
                 sparam = va_arg(vl,uint8_t**);
                 iparam = va_arg(vl,int32_t*);
@@ -462,6 +465,66 @@ exit:
     va_end(vl);
     return ret;
 }
+
+/**
+
+* @brief scans buf for bytes contained in pattern
+*
+* @param[in] buf       where to start the scan
+* @param[in] ebuf      where to end the scan
+* @param[in] pattern   characters to stop to
+*
+* @return a pointer to the location of one of the bytes in pattern or NULL if they cannot be found
+*/
+
+uint8_t* _gs_findstr(uint8_t *buf,uint8_t *ebuf,uint8_t *pattern){
+    uint8_t *pt;
+    while(buf<ebuf){
+        pt = pattern;
+        while(*pt && buf<ebuf) {
+            if(*buf!=*pt) break;
+            pt++;
+            buf++;
+        }
+        if (!*pt) return buf;
+        buf++;
+    }
+    return NULL;
+}
+
+int _gs_wait_for_pin_ready() {
+    int i;
+    for(i=10;i>0;--i) {
+        vhalSerialWrite(gs.serial,"AT+CPIN?\r\n",10);
+        while(_gs_readline(1000)>=0){
+            if(_gs_findstr(gs.buffer,gs.buffer+gs.bytes,"READY")){
+                if(!_gs_wait_for_ok(500)) continue;
+                i = -1;
+                break;
+            }
+        }
+    }
+    return (i < 0);
+}
+
+int _gs_get_activity_status() {
+    uint8_t *p;
+    int32_t pas = -1; // unexpected/unknown
+    int i;
+
+    vhalSerialWrite(gs.serial,"AT+CPAS\r\n",9);
+    for(i=10;i>0;--i) {
+        if(_gs_readline(100)>=0){
+            p = _gs_findstr(gs.buffer,gs.buffer+gs.bytes,"+CPAS:"); 
+            if(p && _gs_parse_number(p,gs.buffer+gs.bytes,&pas))
+                break;
+        }
+    }
+    if(!_gs_wait_for_ok(500)) return -1;
+    return pas;
+}
+
+
 
 
 
@@ -556,7 +619,7 @@ int _gs_config0(){
     // //display app versions
     // vhalSerialWrite(gs.serial,"AT+QAPPVER\r\n",12);
     // if(!_gs_wait_for_ok(500)) return 0;
-   
+
     vosThSleep(TIME_U(1000,MILLIS)); 
     gs.initialized=1;
     return 1;
@@ -1944,6 +2007,29 @@ int _gs_imei(uint8_t *imei){
     _gs_release_slot(slot);
     return res;
 }
+
+int _gs_local_ip(uint8_t*ip){
+    int res=-1;
+    int l0,p0,p1,p2;
+    uint8_t *s0=NULL;
+    GSSlot *slot;
+    slot = _gs_acquire_slot(GS_CMD_QIACT,NULL,64,GS_TIMEOUT,1);
+    _gs_send_at(GS_CMD_QIACT,"?");
+    _gs_wait_for_slot();
+    if (!slot->err) {
+        *slot->eresp=0;
+        if(_gs_parse_command_arguments(slot->resp,slot->eresp,"iiiS",&p0,&p1,&p2,&s0,&l0)!=4) {
+            res = 0;
+        } else if (s0) {
+            res = MIN(15,l0);
+            memcpy(ip,s0,res);
+        }
+    }
+    _gs_release_slot(slot);
+    return res;
+}
+
+
 int _gs_iccid(uint8_t* iccid){
     int res=-1;
     int l0;
@@ -1955,9 +2041,9 @@ int _gs_iccid(uint8_t* iccid){
     if (!slot->err) {
         if(_gs_parse_command_arguments(slot->resp,slot->eresp,"s",&s0,&l0)!=1) {
             res = 0;
-        } else {
-            res = l0;
-            if (s0) memcpy(iccid,s0,MIN(22,l0));
+        } else if (s0) {
+            res = MIN(22, l0);
+            memcpy(iccid,s0,MIN(22,l0));
         }
     }
     _gs_release_slot(slot);

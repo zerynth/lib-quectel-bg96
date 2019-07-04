@@ -1,0 +1,15 @@
+---
+description: Driver for Quectel BG96 GSM and GPS modules
+fullname: lib.quectel.bg96
+info:
+    chip_manufacturer: Quectel
+    chip_name: BG96
+    name: GSM/GPRS/GPS Driver
+    type: Connectivity
+keywords:
+- wireless
+- gsm
+- quectel
+- gps
+title: Quectel BG96 GSM and GPS modules
+...

@@ -1,3 +1,7 @@
+﻿#include "zerynth.h"
+
+#define print_buffer(buf, len) vhalSerialWrite(0, buf, len)
+
 #define MAX_BUF 1024
 #define MAX_CMD 545
 #if !defined(BG96_MAX_SOCKS)
@@ -104,8 +108,8 @@ typedef struct _gsm_status{
     uint8_t dnsaddrlen;
     uint8_t dns_ready;
     uint8_t dns_count;
-    uint8_t lac[4];
-    uint8_t ci[4];
+    uint8_t lac[10];
+    uint8_t ci[10];
     uint8_t tech;
 
 } GStatus;
@@ -260,6 +264,9 @@ int _gs_socket_close(int id);
 int _gs_resolve(uint8_t* url, int len, uint8_t* addr);
 int _gs_socket_tls(int id, uint8_t* cacert, int cacertlen, uint8_t* clicert, int clicertlen, uint8_t* pvkey, int pvkeylen, int authmode);
 int _gs_socket_bind(int id, NetAddress *addr);
+int _gs_local_ip(uint8_t *ip);
+int _gs_wait_for_ready(int timeout);
+
 
 
 typedef struct _gnssloc {

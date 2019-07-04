@@ -1,5 +1,4 @@
-// #define ZERYNTH_PRINTF
-#include "zerynth.h"
+//#define ZERYNTH_PRINTF
 #include "bg96_ifc.h"
 
 
@@ -85,7 +84,7 @@ C_NATIVE(_bg96_startup){
     if (!skip_poweron) {
         //setup pins
         printf("Setting pins\n");
-        vhalPinSetMode(gs.status,PINMODE_INPUT_PULLNONE);
+        vhalPinSetMode(gs.status,PINMODE_INPUT_PULLUP);
         vhalPinSetMode(gs.poweron,PINMODE_OUTPUT_PUSHPULL);
         vhalPinSetMode(gs.reset,PINMODE_OUTPUT_PUSHPULL);
         _gs_poweron();
@@ -304,11 +303,12 @@ C_NATIVE(_bg96_rssi){
  */
 C_NATIVE(_bg96_network_info){
     NATIVE_UNWARN();
-    int p0,l0,l1,l2,l3,l4;
+    int p0, l0, mcc, mnc;
     uint8_t *s0,*s1,*s2,*s3,*s4,*st,*se;
     PString *urat;
     PString *tstr=NULL;
     PTuple *tpl = ptuple_new(8,NULL);
+    uint8_t bsi[5];
 
     //RAT  : URAT
     //CELL : UCELLINFO
@@ -328,13 +328,13 @@ C_NATIVE(_bg96_network_info){
     PTUPLE_SET_ITEM(tpl,2,PSMALLINT_NEW(-1));
     urat = pstring_new(0,NULL);
     PTUPLE_SET_ITEM(tpl,3,urat);
-    urat = pstring_new(4,gs.lac);
+    urat = pstring_new(strlen(gs.lac), gs.lac);
     PTUPLE_SET_ITEM(tpl,4,urat);
-    urat = pstring_new(4,gs.ci);
+    urat = pstring_new(strlen(gs.ci), gs.ci);
     PTUPLE_SET_ITEM(tpl,5,urat);
 
     //registered to network
-    PTUPLE_SET_ITEM(tpl,6,gs.registered ? PBOOL_TRUE():PBOOL_FALSE());
+    PTUPLE_SET_ITEM(tpl,6,(gs.registered == GS_REG_OK || gs.registered == GS_REG_ROAMING) ? PBOOL_TRUE():PBOOL_FALSE());
     //attached to APN
     PTUPLE_SET_ITEM(tpl,7,gs.attached ? PBOOL_TRUE():PBOOL_FALSE());
 
@@ -384,16 +384,20 @@ C_NATIVE(_bg96_link_info){
     PString *ips;
     PString *dns;
     uint32_t addrlen;
-    uint8_t dnss[16];
+    uint8_t addrbuf[16];
 
     RELEASE_GIL();
 
-    ips = pstring_new(0,NULL);
-    addrlen = _gs_dns(dnss);
-
+    addrlen = _gs_local_ip(addrbuf);
+    if(addrlen > 0) {
+        ips = pstring_new(addrlen, addrbuf);
+    }
+    else {
+        ips = pstring_new(0, NULL);
+    }
 
     if(addrlen>0){
-        dns = pstring_new(addrlen,dnss);
+        dns = pstring_new(addrlen,addrbuf);
     } else {
         dns = pstring_new(0,NULL);
     }
@@ -969,7 +973,7 @@ C_NATIVE(_bg96_gnss_fix){
     r = _gs_gnss_loc(&loc);
     if(r==0) {
         //there is a fix, let's decode
-        PTuple *tpl = ptuple_new(8,NULL);
+        PTuple *tpl = ptuple_new(10,NULL);
         PTuple *utc = ptuple_new(6,NULL);
 
         PTUPLE_SET_ITEM(utc,0,PSMALLINT_NEW((2000+loc.yy)));
@@ -984,9 +988,11 @@ C_NATIVE(_bg96_gnss_fix){
         PTUPLE_SET_ITEM(tpl,2,pfloat_new(loc.alt));
         PTUPLE_SET_ITEM(tpl,3,pfloat_new(loc.speed));
         PTUPLE_SET_ITEM(tpl,4,pfloat_new(loc.cog));
-        PTUPLE_SET_ITEM(tpl,5,pfloat_new(loc.precision));
-        PTUPLE_SET_ITEM(tpl,6,PSMALLINT_NEW(loc.nsat));
-        PTUPLE_SET_ITEM(tpl,7,utc);
+        PTUPLE_SET_ITEM(tpl,5,PSMALLINT_NEW(loc.nsat));
+        PTUPLE_SET_ITEM(tpl,6,pfloat_new(loc.precision));
+        PTUPLE_SET_ITEM(tpl,7,pfloat_new(-1.0));
+        PTUPLE_SET_ITEM(tpl,8,pfloat_new(-1.0));
+        PTUPLE_SET_ITEM(tpl,9,utc);
         *res = tpl;
     }
     ACQUIRE_GIL();
