@@ -1,24 +1,31 @@
-//#define ZERYNTH_PRINTF
-#include "bg96_ifc.h"
+#include "zerynth.h"
+#include "bg96.h"
 
-
-//a reference to a Python exception to be returned on error (g350Exception)
+//a reference to a Python exception to be returned on error (bg96Exception)
 int32_t bg96exc;
+
+#if 0
+#define printf(...) vbl_printf_stdout(__VA_ARGS__)
+#define print_buffer(bf, ln) 	for(uint8_t i = 0; i < ln; i++) { \
+					printf("%c", bf[i]); \
+				} \
+				printf("\n"); 
+#else
+#define printf(...)
+#define print_buffer(bf, ln)
+#endif
 
 ///////// CNATIVES
 // The following functions are callable from Python.
 // Functions starting with "_" are utility functions called by CNatives
 
 
-/**
- * @brief strings for network types
- */
+SocketAPIPointers bg96_api;
 uint8_t *_urats;
-uint8_t _uratpos[] = {0,3,13};
-uint8_t _uratlen[] = {3,10,11};
-
+uint8_t _urats_len[] = {3, 4, 3, 10, 11};
+uint8_t _urats_pos[] = {0, 3, 7, 10, 20};
 /**
- * @brief _g350_init calls _gs_init, _gs_poweron and _gs_config0
+ * @brief _bg96_init calls _gs_init, _gs_poweron and _gs_config0
  *
  * As last parameter, requires an integer saved to global bg96exc, representing the name assigned to bg96Exception
  * so that it can be raised by returning bg96exc. If modules initialization is successful, the next step is calling startup
@@ -27,19 +34,12 @@ uint8_t _uratlen[] = {3,10,11};
 C_NATIVE(_bg96_init){
     NATIVE_UNWARN();
     int32_t serial;
-    int32_t rx;
-    int32_t tx;
     int32_t rts;
     int32_t dtr;
-    int32_t poweron;
-    int32_t reset;
-    int32_t status;
     int32_t err = ERR_OK;
     int32_t exc;
 
-
-    if (parse_py_args("iiiiiii", nargs, args, &serial, &dtr, &rts, &poweron, &reset, &status, &exc) != 7)
-        return ERR_TYPE_EXC;
+    if (parse_py_args("iiii", nargs, args, &serial, &dtr, &rts, &exc) != 4) return ERR_TYPE_EXC;
 
     bg96exc = exc;
 
@@ -51,109 +51,189 @@ C_NATIVE(_bg96_init){
     gs.serial = serial&0xff;
     gs.rx = _vm_serial_pins[gs.serial].rxpin;
     gs.tx = _vm_serial_pins[gs.serial].txpin;
-    printf("RX %x TX %x\n",gs.rx,gs.tx);
-    printf("MAX SOCKS %i\n",MAX_SOCKS);
     gs.dtr = dtr;
     gs.rts = rts;
-    gs.poweron = poweron;
-    gs.reset = reset;
-    gs.status = status;
-    _urats = gc_malloc(3+10+11);
-    memcpy(_urats,"GSMLTE Cat M1LTE Cat NB1",24);
-    printf("After poweron\n");
+
     ACQUIRE_GIL();
+    bg96_api.socket = bg96_gzsock_socket;
+    bg96_api.connect = bg96_gzsock_connect;
+    bg96_api.setsockopt = bg96_gzsock_setsockopt;
+    bg96_api.getsockopt = bg96_gzsock_getsockopt;
+    bg96_api.send = bg96_gzsock_send;
+    bg96_api.sendto = bg96_gzsock_sendto;
+    bg96_api.write = bg96_gzsock_write;
+    bg96_api.recv = bg96_gzsock_recv;
+    bg96_api.recvfrom = bg96_gzsock_recvfrom;
+    bg96_api.read = bg96_gzsock_read;
+    bg96_api.close = bg96_gzsock_close;
+    bg96_api.shutdown = bg96_gzsock_shutdown;
+    bg96_api.bind = bg96_gzsock_bind;
+    bg96_api.accept = NULL;
+    bg96_api.listen = NULL;
+    bg96_api.select = bg96_gzsock_select;
+    bg96_api.fcntl = bg96_gzsock_fcntl;
+    bg96_api.ioctl = NULL;
+    bg96_api.getaddrinfo = bg96_gzsock_getaddrinfo;
+    bg96_api.freeaddrinfo = bg96_gzsock_freeaddrinfo;
+    bg96_api.inet_addr = NULL;
+    bg96_api.inet_ntoa = NULL;
 
-
+    printf("After init\n");
+    gzsock_init(&bg96_api);
+    printf("After gzsock_init\n");
+    _urats = gc_malloc(3 + 4 + 3 + 10 + 11);
+    memcpy(_urats, "GSMGPRSLTELTE Cat M1LTE Cat NB1", 31);
     return err;
 }
 
-
-
+/**
+ * @brief Setup modem serial port, AT configuration and start modem thread
+ *
+ * Optionally disable modem (to save power when only GNSS in use)
+ */
 C_NATIVE(_bg96_startup){
     NATIVE_UNWARN();
     int32_t err = ERR_OK;
-    int32_t skip_poweron;
+    int32_t without_modem;
     *res = MAKE_NONE();
-    
-    if(parse_py_args("i",nargs,args,&skip_poweron)!=1) return ERR_TYPE_EXC;
+
+    if (parse_py_args("i", nargs, args, &without_modem) != 1) return ERR_TYPE_EXC;
 
     RELEASE_GIL();
-    //Init serial
-    vhalSerialDone(gs.serial);
-    vhalSerialInit(gs.serial, 115200, SERIAL_CFG(SERIAL_PARITY_NONE,SERIAL_STOP_ONE, SERIAL_BITS_8,0,0), gs.rx, gs.tx);
-    if (!skip_poweron) {
-        //setup pins
-        printf("Setting pins\n");
-        vhalPinSetMode(gs.status,PINMODE_INPUT_PULLUP);
-        vhalPinSetMode(gs.poweron,PINMODE_OUTPUT_PUSHPULL);
-        vhalPinSetMode(gs.reset,PINMODE_OUTPUT_PUSHPULL);
-        _gs_poweron();
-    }
-    if(!_gs_wait_for_ready(15000)){
+    vosSemWait(gs.slotlock);
+
+    if (_gs_stop() != 0)
         err = ERR_HARDWARE_INITIALIZATION_ERROR;
-    } else {
-        if(!_gs_config0()) err = ERR_HARDWARE_INITIALIZATION_ERROR;
+    else
+    if (vhalSerialInit(gs.serial, 115200, SERIAL_CFG(SERIAL_PARITY_NONE,SERIAL_STOP_ONE, SERIAL_BITS_8,0,0), gs.rx, gs.tx) != 0)
+        err = ERR_HARDWARE_INITIALIZATION_ERROR;
+    else
+    if (!_gs_config0(without_modem))
+        err = ERR_HARDWARE_INITIALIZATION_ERROR;
+    else {
+        if (gs.thread==NULL){
+            //let's start modem thread (if not already started)
+            printf("Starting modem thread with size %i\n",VM_DEFAULT_THREAD_SIZE);
+            gs.thread = vosThCreate(VM_DEFAULT_THREAD_SIZE,VOS_PRIO_NORMAL,_gs_loop,NULL,NULL);
+            vosThResume(gs.thread);
+            vosThSleep(TIME_U(1000,MILLIS)); // let modem thread have a chance to start
+        }
+    }
+    // reset driver status (assuming modem has restarted)
+    gs.attached = 0;
+    gs.registered = 0;
+    gs.gsm_status = 0;
+    gs.gprs_status = 0;
+    gs.eps_status = 0;
+    gs.registration_status_time = (uint32_t)(vosMillis() / 1000);
+
+    // start loop and wait
+    if (_gs_start() != 0)
+        err = ERR_HARDWARE_INITIALIZATION_ERROR;
+
+    vosSemSignal(gs.slotlock);
+    ACQUIRE_GIL();
+    return err;
+}
+
+/**
+ * @brief Stop modem thread and close serial port
+ *
+ * Optionally disable modem (to save power when only GNSS in use)
+ */
+C_NATIVE(_bg96_shutdown){
+    NATIVE_UNWARN();
+    int32_t err = ERR_OK;
+    int32_t only_modem;
+    *res = MAKE_NONE();
+    
+    if (parse_py_args("i", nargs, args, &only_modem) != 1) return ERR_TYPE_EXC;
+    printf("%s only_modem=%d\n", __FUNCTION__, only_modem);
+    
+    RELEASE_GIL();
+    if (only_modem) {
+        if (!_gs_modem_functionality(0))
+            err = ERR_HARDWARE_INITIALIZATION_ERROR;
+    }
+    else {
+        vosSemWait(gs.slotlock);
+
+        if (_gs_stop() != 0)
+            err = ERR_HARDWARE_INITIALIZATION_ERROR;
+        
+        // attempt normal shutdown
+        vhalSerialInit(gs.serial, 115200, SERIAL_CFG(SERIAL_PARITY_NONE,SERIAL_STOP_ONE, SERIAL_BITS_8,0,0), gs.rx, gs.tx);
+        // check alive
+        vhalSerialWrite(gs.serial, "ATE0\r\n", 6);
+        if (_gs_wait_for_ok(500)) {
+            //enter minimal functionality
+            vhalSerialWrite(gs.serial, "AT+CFUN=0\r\n", 11);
+            _gs_wait_for_ok(15000);
+            //power down
+            vhalSerialWrite(gs.serial, "AT+QPOWD\r\n", 10);
+            *res = PSMALLINT_NEW(1);
+        }
+        vhalSerialDone(gs.serial);
+
+        vosSemSignal(gs.slotlock);
     }
     ACQUIRE_GIL();
-    if(err==ERR_OK){
-        //let's start modem thread
-        printf("Starting modem thread with size %i\n",VM_DEFAULT_THREAD_SIZE);
-        gs.thread = vosThCreate(VM_DEFAULT_THREAD_SIZE,VOS_PRIO_NORMAL,_gs_loop,NULL,NULL);
-        vosThResume(gs.thread);
+    return err;
+}
+
+/**
+ * @brief Stop/restart modem thread
+ *
+ * Give direct access to modem serial port
+ */
+C_NATIVE(_bg96_bypass){
+    NATIVE_UNWARN();
+    int32_t mode;
+    int32_t err=ERR_OK;
+
+    if(parse_py_args("i",nargs,args,&mode)!=1) return ERR_TYPE_EXC;
+
+    *res = MAKE_NONE();
+    if (mode) {
+        vosSemWait(gs.slotlock);
+        if (_gs_stop() != 0)
+            err = ERR_HARDWARE_INITIALIZATION_ERROR;
+    }
+    else {
+        if (_gs_start() != 0)
+            err = ERR_HARDWARE_INITIALIZATION_ERROR;
+        vosSemSignal(gs.slotlock);
     }
     return err;
 }
 
 
-
-
-
-
-// /**
-//  * @brief _bg96_detach removes the link with the APN while keeping connected to the GSM network
-//  *
-//  *
-//  */
+/**
+ * @brief _bg96_detach removes the link with the APN while keeping connected to the GSM network
+ *
+ *
+ */
 C_NATIVE(_bg96_detach){
     NATIVE_UNWARN();
     int err = ERR_OK;
-    int r,timeout=10000;
     *res = MAKE_NONE();
     RELEASE_GIL();
-    if(!_gs_control_psd(0)) goto exit;
 
-    r = _gs_attach(0);
-    if(r) {
-        if (r==GS_ERR_TIMEOUT) err = ERR_TIMEOUT_EXC;
-        else err = bg96exc;
-        goto exit;
-    }
-    while(timeout>0){
-        _gs_check_network();
-        _gs_is_attached();
-        if (!gs.attached) break;
-        vosThSleep(TIME_U(100,MILLIS));
-        timeout-=100;
-    }
-    if(timeout<0) {
-        err = ERR_TIMEOUT_EXC;
-        goto exit;
-    }
+    if(!_gs_control_psd(0))
+        err = bg96exc;
 
-exit:
     ACQUIRE_GIL();
     return err;
 }
 
 
-
-// /**
-//  * @brief _g350_attach tries to link to the given APN
-//  *
-//  * This function can block for a very long time (up to 2 minutes) due to long timeout of used AT commands
-//  *
-//  *
-//  */
+/**
+ * @brief _bg96_attach tries to link to the given APN
+ *
+ * This function can block for a very long time (up to 2 minutes) due to long timeout of used AT commands
+ *
+ *
+ */
 C_NATIVE(_bg96_attach){
     NATIVE_UNWARN();
     uint8_t *apn;
@@ -164,51 +244,36 @@ C_NATIVE(_bg96_attach){
     uint32_t password_len;
     uint32_t authmode;
     int32_t timeout;
-    int32_t wtimeout;
     int32_t err=ERR_OK;
 
-    int i;
-
-
-    if(parse_py_args("sssii",nargs,args,&apn,&apn_len,&user,&user_len,&password,&password_len,&authmode,&wtimeout)!=5) return ERR_TYPE_EXC;
+    if(parse_py_args("sssii",nargs,args,&apn,&apn_len,&user,&user_len,&password,&password_len,&authmode,&timeout)!=5) return ERR_TYPE_EXC;
 
     *res = MAKE_NONE();
     RELEASE_GIL();
 
-    //Attach to GPRS
-    i = _gs_attach(1);
-    if(i) {
-        if (i==GS_ERR_TIMEOUT) err = ERR_TIMEOUT_EXC;
-        else err = bg96exc;
-        goto exit;
-    }
-    timeout=wtimeout;
+    //Wait for registration
+    _gs_check_network();
     while(timeout>0){
+        if (gs.registered>=GS_REG_OK) break;
+        vosThSleep(TIME_U(1000,MILLIS));
+        timeout-=1000;
         _gs_check_network();
-        _gs_is_attached();
-        if ((gs.registered==GS_REG_OK || gs.registered==GS_REG_ROAMING)&&(gs.attached)) break;
-        vosThSleep(TIME_U(100,MILLIS));
-        timeout-=100;
     }
-    if(timeout<0) {
+    if (gs.registered<GS_REG_OK) {
         err = ERR_TIMEOUT_EXC;
         goto exit;
     }
-
     //configure PSD
     err = bg96exc;
     if(!_gs_configure_psd(apn,apn_len,user,user_len,password,password_len,authmode)) goto exit;
 
-
     //activate PSD
-    gs.attached = 0;
     if(!_gs_control_psd(1)) goto exit;
 
     err = ERR_OK;
 
-    exit:
+exit:
     ACQUIRE_GIL();
-    *res = MAKE_NONE();
     return err;
 }
 
@@ -225,7 +290,6 @@ C_NATIVE(_bg96_operators){
 
     RELEASE_GIL();
     i = _gs_list_operators();
-    ACQUIRE_GIL();
     if (i){
         *res = MAKE_NONE();
         return ERR_OK;
@@ -240,6 +304,7 @@ C_NATIVE(_bg96_operators){
         PTUPLE_SET_ITEM(tpl,i,tpi);
     }
 
+    ACQUIRE_GIL();
     *res = tpl;
     return ERR_OK;
 }
@@ -273,7 +338,7 @@ C_NATIVE(_bg96_set_operator){
 
 
 /**
- * @brief _g350_rssi return the signal strength as reported by +CIEV urc
+ * @brief _bg96_rssi return the signal strength as reported by +CIEV urc
  *
  *
  */
@@ -292,49 +357,65 @@ C_NATIVE(_bg96_rssi){
     return ERR_OK;
 }
 
-
-
-
+/**
+ * @brief strings for network types (must have the same order as bits in GS_RAT_xxx)
+ */
+/*const uint8_t * const _urats[] = { "","GSM","GPRS","LTE","LTE Cat M1","LTE Cat NB1" };*/
+uint8_t * _urats;
+#define MAX_URATS (sizeof(_urats)/sizeof(*_urats))
 
 /**
- * @brief _g450_network_info retrieves network information through +URAT and *CGED
+ * @brief _bg96_network_info retrieves network information through +URAT and *CGED
  *
  *
  */
 C_NATIVE(_bg96_network_info){
     NATIVE_UNWARN();
-    int p0, l0, mcc, mnc;
-    uint8_t *s0,*s1,*s2,*s3,*s4,*st,*se;
-    PString *urat;
-    PString *tstr=NULL;
+    int p0,l0,mcc,mnc;
+    PString *str;
     PTuple *tpl = ptuple_new(8,NULL);
-    uint8_t bsi[5];
+    uint8_t rats[40];
+    int ratslen;
 
     //RAT  : URAT
     //CELL : UCELLINFO
     RELEASE_GIL();
     _gs_check_network();
     _gs_is_attached();
-    if (gs.tech==0) p0=0;
-    else if (gs.tech==8) p0=1;
-    else if (gs.tech==9) p0=2;
-    else p0=0;
-    urat = pstring_new(_uratlen[p0],_urats+_uratpos[p0]);
-    PTUPLE_SET_ITEM(tpl,0,urat);
+    if (_gs_cell_info(&mcc, &mnc) <= 0) {
+        mcc = -1;
+        mnc = -1;
+    }
+    
+    // build RAT (radio access technology) string from static buffer
+    // e.g. "GSM+LTE Cat M1"
+    ratslen = 0;
+    for (p0=1,l0=1; p0<MAX_URATS; ++p0,l0<<=1) {
+        if (gs.tech & l0) {
+            int len = _urats_len[p0];
+            int pos = _urats_pos[p0];
+            if (ratslen + len + 1 > sizeof(rats)) break; // for safety
+            if (ratslen > 0)
+                rats[ratslen++] = '+';
+            memcpy(rats+ratslen, _urats + pos, len);
+            ratslen += len;
+        }
+    }
+    str = pstring_new(ratslen,rats);
+    PTUPLE_SET_ITEM(tpl,0,str);
 
+    PTUPLE_SET_ITEM(tpl,1,PSMALLINT_NEW(mcc));
+    PTUPLE_SET_ITEM(tpl,2,PSMALLINT_NEW(mnc));
+    str = pstring_new(0,NULL);
+    PTUPLE_SET_ITEM(tpl,3,str);
 
-
-    PTUPLE_SET_ITEM(tpl,1,PSMALLINT_NEW(-1));
-    PTUPLE_SET_ITEM(tpl,2,PSMALLINT_NEW(-1));
-    urat = pstring_new(0,NULL);
-    PTUPLE_SET_ITEM(tpl,3,urat);
-    urat = pstring_new(strlen(gs.lac), gs.lac);
-    PTUPLE_SET_ITEM(tpl,4,urat);
-    urat = pstring_new(strlen(gs.ci), gs.ci);
-    PTUPLE_SET_ITEM(tpl,5,urat);
+    str = pstring_new(strlen(gs.lac),gs.lac);
+    PTUPLE_SET_ITEM(tpl,4,str);
+    str = pstring_new(strlen(gs.ci),gs.ci);
+    PTUPLE_SET_ITEM(tpl,5,str);
 
     //registered to network
-    PTUPLE_SET_ITEM(tpl,6,(gs.registered == GS_REG_OK || gs.registered == GS_REG_ROAMING) ? PBOOL_TRUE():PBOOL_FALSE());
+    PTUPLE_SET_ITEM(tpl,6,(gs.registered==GS_REG_OK || gs.registered==GS_REG_ROAMING) ? PBOOL_TRUE():PBOOL_FALSE());
     //attached to APN
     PTUPLE_SET_ITEM(tpl,7,gs.attached ? PBOOL_TRUE():PBOOL_FALSE());
 
@@ -344,7 +425,7 @@ C_NATIVE(_bg96_network_info){
 }
 
 /**
- * @brief _g350_mobile_info retrieves info on IMEI and SIM card by means of +CGSN and *CCID
+ * @brief _bg96_mobile_info retrieves info on IMEI and SIM card by means of +CGSN and *CCID
  *
  *
  */
@@ -359,6 +440,7 @@ C_NATIVE(_bg96_mobile_info){
     RELEASE_GIL();
     im_len = _gs_imei(imei);
     ic_len = _gs_iccid(iccid);
+
     if(im_len<=0) {
         PTUPLE_SET_ITEM(tpl,0,pstring_new(0,NULL));
     } else {
@@ -375,7 +457,7 @@ C_NATIVE(_bg96_mobile_info){
 }
 
 /**
- * @brief _g350_link_info retrieves ip and dns by means of +UPSND
+ * @brief _bg96_link_info retrieves ip and dns by means of +UPSND
  *
  *
  */
@@ -389,23 +471,24 @@ C_NATIVE(_bg96_link_info){
     RELEASE_GIL();
 
     addrlen = _gs_local_ip(addrbuf);
-    if(addrlen > 0) {
-        ips = pstring_new(addrlen, addrbuf);
-    }
-    else {
-        ips = pstring_new(0, NULL);
+    if(addrlen>0){
+        ips = pstring_new(addrlen,addrbuf);
+    } else {
+        ips = pstring_new(0,NULL);
     }
 
+    addrlen = _gs_dns(addrbuf);
     if(addrlen>0){
         dns = pstring_new(addrlen,addrbuf);
     } else {
         dns = pstring_new(0,NULL);
     }
 
-    ACQUIRE_GIL();
     PTuple *tpl = ptuple_new(2,NULL);
     PTUPLE_SET_ITEM(tpl,0,ips);
     PTUPLE_SET_ITEM(tpl,1,dns);
+
+    ACQUIRE_GIL();
     *res = tpl;
     return ERR_OK;
 }
@@ -418,7 +501,6 @@ C_NATIVE(_bg96_link_info){
 
 C_NATIVE(_bg96_socket_create){
     NATIVE_UNWARN();
-    int err = ERR_OK;
     int32_t family;
     int32_t type;
     int32_t proto;
@@ -427,56 +509,58 @@ C_NATIVE(_bg96_socket_create){
         return ERR_TYPE_EXC;
     if (family != DRV_AF_INET)
         return ERR_UNSUPPORTED_EXC;
-    proto = (type == DRV_SOCK_DGRAM) ? 17 : 6;
 
     RELEASE_GIL();
-    err = _gs_socket_new(proto,0);
-    if(err<0) {
-        err = ERR_IOERROR_EXC;
-    } else {
-        *res = PSMALLINT_NEW(err);
-        err = ERR_OK;
-    }
+    int32_t sock_id = gzsock_socket(
+          family,
+          type + 1,
+          proto,
+          NULL);
     ACQUIRE_GIL();
-
-    return err;
+    if(sock_id<0) {
+        return ERR_IOERROR_EXC;
+    } 
+    *res = PSMALLINT_NEW(sock_id);
+    return ERR_OK;
 }
 
 C_NATIVE(_bg96_socket_connect) {
     C_NATIVE_UNWARN();
-    int32_t sock,err=ERR_OK;
-    GSocket *ssock;
-    GSSlot *slot;
-    NetAddress addr;
+    int32_t sock,ret;
+    NetAddress netaddr;
+    struct sockaddr_in addr;
 
-    if (parse_py_args("in", nargs, args, &sock, &addr) != 2)
+    if (parse_py_args("in", nargs, args, &sock, &netaddr) != 2)
         return ERR_TYPE_EXC;
 
+    addr.sin_family = AF_INET;
+    addr.sin_port = netaddr.port;
+    addr.sin_addr.s_addr = netaddr.ip;
+
     *res = MAKE_NONE();
+
     RELEASE_GIL();
-    sock = _gs_socket_connect(sock,&addr);
-    if(sock) {
-        err = ERR_IOERROR_EXC;
-    }
+    ret = gzsock_connect(sock, (struct sockaddr *) &addr, sizeof(addr));
     ACQUIRE_GIL();
-    return err;
+
+    if (ret < 0) {
+        return ERR_CONNECTION_REF_EXC;
+    }
+
+    return ERR_OK;
 }
 
 C_NATIVE(_bg96_socket_close) {
     C_NATIVE_UNWARN();
     int32_t sock;
-    GSocket *ssock;
-    GSSlot *slot;
-    int err = ERR_OK;
-    int rr;
+    int ret;
     if (parse_py_args("i", nargs, args, &sock) != 1)
         return ERR_TYPE_EXC;
     RELEASE_GIL();
-    sock = _gs_socket_close(sock);
-    //ignore result
+    ret = gzsock_close(sock);
     ACQUIRE_GIL();
-    *res = PSMALLINT_NEW(sock);
-    return err;
+    *res = PSMALLINT_NEW(ret);
+    return ERR_OK;
 }
 
 C_NATIVE(_bg96_socket_send) {
@@ -485,27 +569,19 @@ C_NATIVE(_bg96_socket_send) {
     int32_t len;
     int32_t flags;
     int32_t sock;
-    int32_t wrt;
-    int32_t tsnd;
-    int err = ERR_OK;
+    int ret;
     if (parse_py_args("isi", nargs, args,
                 &sock,
                 &buf, &len,
                 &flags) != 3) return ERR_TYPE_EXC;
+
     RELEASE_GIL();
-    wrt=0;
-    while(wrt<len && err==ERR_OK){
-        tsnd = MIN(MAX_SOCK_BUF,(len-wrt));
-        tsnd = _gs_socket_send(sock,buf+wrt,tsnd);
-        if (tsnd<0) {
-            err=ERR_IOERROR_EXC;
-            break;
-        }
-        wrt+=tsnd;
-    }
+    ret = gzsock_send(sock, buf, len, flags);
     ACQUIRE_GIL();
-    *res = PSMALLINT_NEW(wrt);
-    return err;
+
+    if (ret<0) return ERR_IOERROR_EXC;
+    *res = PSMALLINT_NEW((uint32_t)ret);
+    return ERR_OK;
 }
 
 C_NATIVE(_bg96_socket_sendto){
@@ -516,32 +592,29 @@ C_NATIVE(_bg96_socket_sendto){
     int32_t sock;
     int32_t wrt=0;
     int32_t tsnd;
-    int32_t err=ERR_OK;
-    NetAddress addr;
+    int32_t ret;
+    NetAddress netaddr;
 
     if (parse_py_args("isni", nargs, args,
             &sock,
             &buf, &len,
-            &addr,
+            &netaddr,
             &flags)
         != 4)
         return ERR_TYPE_EXC;
 
-    RELEASE_GIL();
-    wrt=0;
-    while(wrt<len && err==ERR_OK){
-        tsnd = MIN(MAX_SOCK_BUF,(len-wrt));
-        tsnd = _gs_socket_sendto(sock,buf+wrt,tsnd,&addr);
-        if (tsnd<0) {
-            err=ERR_IOERROR_EXC;
-            break;
-        }
-        wrt+=tsnd;
-    }
-    ACQUIRE_GIL();
+    struct sockaddr_in addr;
 
-    *res = PSMALLINT_NEW(wrt);
-    return err;
+    addr.sin_family = AF_INET;
+    addr.sin_port = netaddr.port;
+    addr.sin_addr.s_addr = netaddr.ip;
+
+    RELEASE_GIL();
+    ret = gzsock_sendto(sock, buf, len, flags, (struct sockaddr *) &addr, sizeof(addr));
+    ACQUIRE_GIL();
+    if (ret<0) return ERR_IOERROR_EXC;
+    *res = PSMALLINT_NEW((uint32_t)ret);
+    return ERR_OK;
 }
 
 C_NATIVE(_bg96_socket_recv_into){
@@ -552,10 +625,8 @@ C_NATIVE(_bg96_socket_recv_into){
     int32_t flags;
     int32_t ofs;
     int32_t sock;
-    int rb;
-    int trec;
-    int err = ERR_OK;
-    uint8_t *hex;
+    int ret;
+
     if (parse_py_args("isiiI", nargs, args,
             &sock,
             &buf, &len,
@@ -569,21 +640,25 @@ C_NATIVE(_bg96_socket_recv_into){
     len -= ofs;
     len = (sz < len) ? sz : len;
     RELEASE_GIL();
-
-    rb=0;
-    while(rb<len && err==ERR_OK){
-        printf("Reading %i\n",len-rb);
-        trec = _gs_socket_recv(sock,buf+rb,len-rb);
-        printf("Read %i\n",trec);
-        if(trec<0) {
-            err=ERR_IOERROR_EXC;
-        } else {
-            rb+=trec;
+    ret = gzsock_recv(sock, buf, len, flags);
+    ACQUIRE_GIL();
+    printf("requested %i from %i, returned %i\n",len,sock,ret);
+    if (ret<0) {
+        if (ret == ERR_TIMEOUT) {
+            return ERR_TIMEOUT_EXC;
+        } 
+#if defined ZERYNTH_SSL || defined NATIVE_MBEDTLS
+        else if (ret == MBEDTLS_ERR_SSL_TIMEOUT){
+            return ERR_TIMEOUT_EXC;
+        }
+#endif
+        else {
+            return ERR_IOERROR_EXC;
         }
     }
-    ACQUIRE_GIL();
-    *res = PSMALLINT_NEW(rb);
-    return err;
+    
+    *res = PSMALLINT_NEW((uint32_t)ret);
+    return ERR_OK;
 }
 
 C_NATIVE(_bg96_socket_recvfrom_into){
@@ -594,14 +669,12 @@ C_NATIVE(_bg96_socket_recvfrom_into){
     int32_t flags;
     int32_t ofs;
     int32_t sock;
-    int rb;
-    int trec;
-    int err = ERR_OK;
-    uint8_t addr[16];
-    uint32_t addrlen;
+    int ret;
+
     PString *oaddr = NULL;
     int32_t port;
-    int gotip=0;
+
+    struct sockaddr_in addr;
 
     if (parse_py_args("isiiI", nargs, args,
             &sock,
@@ -616,32 +689,22 @@ C_NATIVE(_bg96_socket_recvfrom_into){
     len -= ofs;
     len = (sz < len) ? sz : len;
     RELEASE_GIL();
-    rb=0;
-    while(rb<len && err==ERR_OK){
-        trec = _gs_socket_recvfrom(sock,buf+rb,len-rb,addr,&addrlen,&port);
-        if (trec==0 && rb==0){
-            //no data yet
-            continue;
-        } else if(trec<0) {
-            err=ERR_IOERROR_EXC;
-        } else {
-            //got udp packet
-            rb+=trec;
-            break;
-        }
-    }
+    ret = gzsock_recvfrom(sock, buf, len, flags,  (struct sockaddr *) &addr, sizeof(addr));
     ACQUIRE_GIL();
-    if(err==ERR_OK){
+    if(ret>=0){
+        uint8_t remote_ip[16];
+        int saddrlen;
+        saddrlen = zs_addr_to_string(&addr,remote_ip);
         PTuple* tpl = (PTuple*)psequence_new(PTUPLE, 2);
-        PTUPLE_SET_ITEM(tpl, 0, PSMALLINT_NEW(rb));
-        oaddr = pstring_new(addrlen,addr);
+        PTUPLE_SET_ITEM(tpl, 0, PSMALLINT_NEW(ret));
+        oaddr = pstring_new(saddrlen,remote_ip);
         PTuple* ipo = ptuple_new(2,NULL);
         PTUPLE_SET_ITEM(ipo,0,oaddr);
-        PTUPLE_SET_ITEM(ipo,1,PSMALLINT_NEW(port));
+        PTUPLE_SET_ITEM(ipo,1,PSMALLINT_NEW(OAL_GET_NETPORT(addr.sin_port)));
         PTUPLE_SET_ITEM(tpl, 1, ipo);
         *res = tpl;
     }
-    return err;
+    return ERR_OK;
 }
 
 
@@ -649,96 +712,106 @@ C_NATIVE(_bg96_socket_recvfrom_into){
 C_NATIVE(_bg96_socket_bind){
     C_NATIVE_UNWARN();
     int32_t sock;
-    NetAddress addr;
-    GSocket *ssock;
-    GSSlot *slot;
-    int err = ERR_OK;
-    if (parse_py_args("in", nargs, args, &sock, &addr) != 2)
+    NetAddress netaddr;
+    struct sockaddr_in addr;
+    int ret;
+    if (parse_py_args("in", nargs, args, &sock, &netaddr) != 2)
         return ERR_TYPE_EXC;
+
+    addr.sin_family = AF_INET;
+    addr.sin_port = netaddr.port;
+    addr.sin_addr.s_addr = netaddr.ip;
     RELEASE_GIL();
-    if(_gs_socket_bind(sock,&addr)){
-        err = ERR_IOERROR_EXC;
-    }
+    ret = gzsock_bind(sock,&addr,sizeof(addr));
     ACQUIRE_GIL();
+    if(ret<0) {
+        return ERR_IOERROR_EXC;
+    }
     *res = MAKE_NONE();
-    return err;
+    return ERR_OK;
 }
 
 
 C_NATIVE(_bg96_socket_select){
     C_NATIVE_UNWARN();
     int32_t timeout;
-    int32_t tmp, i, j, sock = -1,r;
-    uint32_t tstart;
-    PObject *tobj;
+    int32_t tmp, i, j, sock = -1,ret;
 
     if (nargs < 4)
-        return ERR_TYPE_EXC;
+    return ERR_TYPE_EXC;
 
-    PObject* rlist = args[0];
-    PObject* wlist = args[1];
-    PObject* xlist = args[2];
-    PObject* tm = args[3];
-    int rls = PSEQUENCE_ELEMENTS(rlist);
+    fd_set rfd;
+    fd_set wfd;
+    fd_set xfd;
+    struct timeval tms;
+    struct timeval *ptm;
+    PObject *rlist = args[0];
+    PObject *wlist = args[1];
+    PObject *xlist = args[2];
+    fd_set *fdsets[3] = {&rfd, &wfd, &xfd};
+    PObject *slist[3] = {rlist, wlist, xlist};
+    PObject *tm = args[3];
+
 
     if (tm == MAKE_NONE()) {
-        timeout = -1;
+        ptm = NULL;
     } else if (IS_PSMALLINT(tm)) {
         timeout = PSMALLINT_VALUE(tm);
-    } else {
-        return ERR_TYPE_EXC;
+        if (timeout < 0)
+            return ERR_TYPE_EXC;
+        tms.tv_sec = timeout / 1000;
+        tms.tv_usec = (timeout % 1000) * 1000;
+        ptm = &tms;
+    } else return ERR_TYPE_EXC;
+
+    for (j = 0; j < 3; j++) {
+        tmp = PTYPE(slist[j]);
+        if (!IS_OBJ_PSEQUENCE_TYPE(tmp))
+            return ERR_TYPE_EXC;
+        FD_ZERO (fdsets[j]);
+        for (i = 0; i < PSEQUENCE_ELEMENTS(slist[j]); i++) {
+            PObject *fd = PSEQUENCE_OBJECTS(slist[j])[i];
+            if (IS_PSMALLINT(fd)) {
+                //printf("%i -> %i\n",j,PSMALLINT_VALUE(fd));
+                FD_SET(PSMALLINT_VALUE(fd), fdsets[j]);
+                if (PSMALLINT_VALUE(fd) > sock)
+                    sock = PSMALLINT_VALUE(fd);
+            } else return ERR_TYPE_EXC;
+        }
     }
 
-    uint8_t *rlready = gc_malloc(rls);
+    printf("maxsock %i\n", sock);
 
     RELEASE_GIL();
-    i=-1;
-    tstart = vosMillis();
-    while(1){
-        i++;
-        if(i>=rls) {
-            //reset and check timeout
-            i=0;
-            if(timeout>=0 && (vosMillis()-tstart>timeout)) break;
-            vosThSleep(TIME_U(100,MILLIS)); //sleep a bit
-            //TODO: consider using RD URC to signal data ready for each socket
-            //and suspend here, avoiding polling (quite cumbersome tough)
-        }
-        tobj = PSEQUENCE_OBJECTS(rlist)[i];
-        sock = PSMALLINT_VALUE(tobj);
-        printf("S0 %i\n",sock);
-        if(sock>=0&&sock<MAX_SOCKS){
-            r = _gs_socket_available(sock);
-            if (r<=0) rlready[i]=0;
-            else rlready[i]=1;
-        }
-    }
-
-    PTuple* tpl = (PTuple*)psequence_new(PTUPLE, 3);
-    //count the number of ready sockets
-    tmp = 0;
-    for (j = 0; j < rls; j++) {
-        if (rlready[j]) tmp++;
-    }
-    //fill ready socket list
-    PTuple *rpl = ptuple_new(tmp,NULL);
-    tmp = 0;
-    for (j = 0; j < rls; j++) {
-        if (rlready[j]) {
-            PTUPLE_SET_ITEM(rpl,tmp,PSEQUENCE_OBJECTS(rlist)[j]);
-            tmp++;
-        }
-    }
-    PTUPLE_SET_ITEM(tpl,0,rpl);
-    //ignore wlist and elist: TODO, add this functionality
-    rpl = ptuple_new(0,NULL);
-    PTUPLE_SET_ITEM(tpl,1,rpl);
-    PTUPLE_SET_ITEM(tpl,2,rpl);
-    gc_free(rlready);
+    ret = gzsock_select( (sock + 1), fdsets[0], fdsets[1], fdsets[2], ptm );
     ACQUIRE_GIL();
 
+    printf("result: %i\n", ret);
+
+    if (ret < 0) {
+        return ERR_IOERROR_EXC;
+    }
+
+    PTuple *tpl = (PTuple *) psequence_new(PTUPLE, 3);
+    for (j = 0; j < 3; j++) {
+        tmp = 0;
+        for (i = 0; i <= sock; i++) {
+            if (FD_ISSET(i, fdsets[j])) tmp++;
+        }
+        PTuple *rtpl = psequence_new(PTUPLE, tmp);
+        tmp = 0;
+        for (i = 0; i <= sock; i++) {
+            //printf("sock %i in %i = %i\n",i,j,FD_ISSET(i, fdsets[j]));
+            if (FD_ISSET(i, fdsets[j])) {
+                PTUPLE_SET_ITEM(rtpl, tmp, PSMALLINT_NEW(i));
+                tmp++;
+            }
+        }
+        PTUPLE_SET_ITEM(tpl, j, rtpl);
+    }
     *res = tpl;
     return ERR_OK;
+
 }
 
 // /////////////////////SSL/TLS
@@ -749,9 +822,81 @@ C_NATIVE(_bg96_socket_select){
 #define _CLIENT_AUTH 8
 #define _SERVER_AUTH 16
 
-C_NATIVE(_bg96_secure_socket)
-{
+C_NATIVE(_bg96_secure_socket) {
     C_NATIVE_UNWARN();
+#if defined ZERYNTH_SSL || defined NATIVE_MBEDTLS
+    int32_t err = ERR_OK;
+    int32_t sock;
+    int32_t i;
+    SSLInfo nfo;
+
+    int32_t family = DRV_AF_INET;
+    int32_t type = DRV_SOCK_STREAM;
+    int32_t proto = 6;
+    int32_t ssocknum = 0;
+    int32_t ctxlen;
+    uint8_t* certbuf = NULL;
+    uint16_t certlen = 0;
+    uint8_t* clibuf = NULL;
+    uint16_t clilen = 0;
+    uint8_t* pkeybuf = NULL;
+    uint16_t pkeylen = 0;
+    uint32_t options = _CLIENT_AUTH | _CERT_NONE;
+    uint8_t* hostbuf = NULL;
+    uint16_t hostlen = 0;
+
+    PTuple* ctx;
+    memset(&nfo,0,sizeof(nfo));
+    ctx = (PTuple*)args[nargs - 1];
+    nargs--;
+    
+    if (parse_py_args("III", nargs, args, DRV_AF_INET, &family, DRV_SOCK_STREAM, &type, 6, &proto) != 3){
+        return ERR_TYPE_EXC;
+    }
+    if (type != DRV_SOCK_DGRAM && type != DRV_SOCK_STREAM){
+        return ERR_TYPE_EXC;
+    }
+    if (family != DRV_AF_INET)
+        return ERR_UNSUPPORTED_EXC;
+    if(proto!=6)
+        return ERR_UNSUPPORTED_EXC;
+
+    ctxlen = PSEQUENCE_ELEMENTS(ctx);
+    if (ctxlen && ctxlen != 5)
+        return ERR_TYPE_EXC;
+
+    if (ctxlen) {
+        //ssl context passed
+        PObject* cacert = PTUPLE_ITEM(ctx, 0);
+        PObject* clicert = PTUPLE_ITEM(ctx, 1);
+        PObject* ppkey = PTUPLE_ITEM(ctx, 2);
+        PObject* host = PTUPLE_ITEM(ctx, 3);
+        PObject* iopts = PTUPLE_ITEM(ctx, 4);
+
+        nfo.cacert = PSEQUENCE_BYTES(cacert);
+        nfo.cacert_len = PSEQUENCE_ELEMENTS(cacert);
+        nfo.clicert = PSEQUENCE_BYTES(clicert);
+        nfo.clicert_len = PSEQUENCE_ELEMENTS(clicert);
+        nfo.hostname = PSEQUENCE_BYTES(host);
+        nfo.hostname_len = PSEQUENCE_ELEMENTS(host);
+        nfo.pvkey = PSEQUENCE_BYTES(ppkey);
+        nfo.pvkey_len = PSEQUENCE_ELEMENTS(ppkey);
+        nfo.options = PSMALLINT_VALUE(iopts);
+    }
+    RELEASE_GIL();
+    sock = gzsock_socket(
+          family,
+          type,
+          proto,
+          (ctxlen) ? &nfo:NULL);
+    ACQUIRE_GIL();
+    printf("CMD_SOCKET: %i %i\n", sock, type);
+    if (sock < 0)
+      return ERR_IOERROR_EXC;
+    *res = PSMALLINT_NEW(sock);
+    return ERR_OK;    
+
+#else 
     int32_t err = ERR_OK;
     int32_t family = DRV_AF_INET;
     int32_t type = DRV_SOCK_STREAM;
@@ -822,7 +967,6 @@ C_NATIVE(_bg96_secure_socket)
     if(err==ERR_OK) {
         //let's configure tls
 
-
         //NOTE: ZERYNTH CERTS END with \0
         if(options&_CERT_NONE) {
            //NO CACERT VERIFICATION
@@ -857,8 +1001,8 @@ C_NATIVE(_bg96_secure_socket)
     }
 
     ACQUIRE_GIL();
-
     return err;
+#endif
 }
 
 
@@ -871,35 +1015,37 @@ C_NATIVE(_bg96_resolve){
     uint32_t len;
     uint8_t saddr[16];
     uint32_t saddrlen;
-    int err = ERR_OK;
+    int ret;
     if (parse_py_args("s", nargs, args, &url, &len) != 1)
         return ERR_TYPE_EXC;
-    RELEASE_GIL();
-    saddrlen = _gs_resolve(url,len,saddr);
-    if(saddrlen>0) {
-        *res = pstring_new(saddrlen,saddr);
-    } else {
-        err = ERR_IOERROR_EXC;
+
+    // if arg is already numeric IP address, return it!
+    struct sockaddr_in addr;
+    ret = zs_string_to_addr(url,len,&addr);
+    if (ret == ERR_OK) {
+        *res = args[0];
+        return ERR_OK;
     }
+    // otherwise resolve IP address
+    struct addrinfo *ip;
+    uint8_t *node = gc_malloc(len+1);
+    memcpy(node,url,len);
+    node[len] = 0; //get a zero terminated string
+    RELEASE_GIL();
+    ret = zsock_getaddrinfo(node,NULL,NULL,&ip);
+    gc_free(node);
     ACQUIRE_GIL();
-    return err;
+    if (ret==ERR_OK) {
+        saddrlen=zs_addr_to_string(ip->ai_addr,saddr);
+        zsock_freeaddrinfo(ip);
+        if(saddrlen>0) {
+            *res = pstring_new(saddrlen,saddr);
+            return ERR_OK;
+        } 
+    }
+    return ERR_IOERROR_EXC;
 }
 
-// /////////////////////IOT
-C_NATIVE(_bg96_set_rat){
-    C_NATIVE_UNWARN();
-    int32_t rat;
-    int32_t band;
-    int err = ERR_OK;
-    if (parse_py_args("ii", nargs, args, &rat, &band) != 2)
-        return ERR_TYPE_EXC;
-    RELEASE_GIL();
-    if (_gs_set_rat(rat,band)){
-        err = bg96exc;
-    }
-    ACQUIRE_GIL();
-    return err;
-}
 
 
 // /////////////////////RTC
@@ -935,20 +1081,164 @@ C_NATIVE(_bg96_rtc){
     return err;
 }
 
-// /////////////////////GNSS HANDLING
-//
 
-C_NATIVE(_bg96_gnss_init){
-    C_NATIVE_UNWARN();
-    int err = ERR_OK;
+///////////////////////SMS
+C_NATIVE(_bg96_sms_send){
+    NATIVE_UNWARN();
+    int32_t err = ERR_OK;
+    int32_t numlen;
+    int32_t txtlen;
+    int32_t mr;
+    uint8_t* num;
+    uint8_t* txt;
     *res = MAKE_NONE();
+    
+    if(parse_py_args("ss",nargs,args,&num,&numlen,&txt,&txtlen)!=2) return ERR_TYPE_EXC;
 
     RELEASE_GIL();
-    if(_gs_gnss_init()) err=ERR_RUNTIME_EXC;
+    mr = _gs_sms_send(num,numlen,txt,txtlen);
+    ACQUIRE_GIL();
+
+    if (mr == -1)
+        *res = PSMALLINT_NEW(-1);
+    else if (mr < 0)
+        err = bg96exc;
+    else
+        *res = pinteger_new(mr);
+    return err;
+}
+
+C_NATIVE(_bg96_sms_list){
+    NATIVE_UNWARN();
+    int32_t err = ERR_OK;
+    int32_t unread;
+    int32_t maxsms;
+    int32_t offset;
+    int32_t msgcnt;
+    int i;
+    *res = MAKE_NONE();
+    
+    if(parse_py_args("iii",nargs,args,&unread,&maxsms,&offset)!=3) return ERR_TYPE_EXC;
+
+    GSSMS *sms = gc_malloc(sizeof(GSSMS)*maxsms);
+    RELEASE_GIL();
+    msgcnt = _gs_sms_list(unread,sms,maxsms,offset);
+    ACQUIRE_GIL();
+
+    PTuple *tpl = ptuple_new(msgcnt,NULL);
+    for(i=0;i<msgcnt;i++){
+        GSSMS *sm = &sms[i];
+        PTuple *pres = ptuple_new(4,NULL);
+        PTUPLE_SET_ITEM(pres,0,pstring_new(sm->txtlen,sm->txt));
+        PTUPLE_SET_ITEM(pres,1,pstring_new(sm->oaddrlen,sm->oaddr));
+        if (sm->tslen<22) {
+            //bad ts
+            PTUPLE_SET_ITEM(pres,2,ptuple_new(0,NULL));
+        } else {
+            PTuple *tm = ptuple_new(7,NULL);
+            int nn=0;
+
+            nn = (sm->ts[0]-'0')*1000+(sm->ts[1]-'0')*100+(sm->ts[2]-'0')*10+(sm->ts[3]-'0');
+            PTUPLE_SET_ITEM(tm,0,PSMALLINT_NEW(nn));
+            nn = (sm->ts[5]-'0')*10+(sm->ts[6]-'0');
+            PTUPLE_SET_ITEM(tm,1,PSMALLINT_NEW(nn));
+            nn = (sm->ts[8]-'0')*10+(sm->ts[9]-'0');
+            PTUPLE_SET_ITEM(tm,2,PSMALLINT_NEW(nn));
+            nn = (sm->ts[11]-'0')*10+(sm->ts[12]-'0');
+            PTUPLE_SET_ITEM(tm,3,PSMALLINT_NEW(nn));
+            nn = (sm->ts[14]-'0')*10+(sm->ts[15]-'0');
+            PTUPLE_SET_ITEM(tm,4,PSMALLINT_NEW(nn));
+            nn = (sm->ts[17]-'0')*10+(sm->ts[18]-'0');
+            PTUPLE_SET_ITEM(tm,5,PSMALLINT_NEW(nn));
+            nn = (sm->ts[20]-'0')*10+(sm->ts[21]-'0');
+            PTUPLE_SET_ITEM(tm,6,PSMALLINT_NEW(nn*15));
+            PTUPLE_SET_ITEM(pres,2,tm);
+        }
+    
+        PTUPLE_SET_ITEM(pres,3,PSMALLINT_NEW(sm->index));
+
+        PTUPLE_SET_ITEM(tpl,i,pres);
+    }
+    *res= tpl;
+    gc_free(sms);
+    return err;
+}
+
+C_NATIVE(_bg96_sms_pending){
+    NATIVE_UNWARN();
+    *res = PSMALLINT_NEW(gs.pendingsms);
+    return ERR_OK;
+}
+
+C_NATIVE(_bg96_sms_delete){
+    NATIVE_UNWARN();
+    int32_t err = ERR_OK;
+    int32_t index, rd;
+    *res = PBOOL_TRUE();
+
+    if(parse_py_args("i",nargs,args,&index)!=1) return ERR_TYPE_EXC;
+
+    RELEASE_GIL();
+    rd = _gs_sms_delete(index);
+    ACQUIRE_GIL();
+
+    if (rd<0) *res=PBOOL_FALSE();
+    return err;
+}
+
+C_NATIVE(_bg96_sms_get_scsa){
+    NATIVE_UNWARN();
+    int32_t err = ERR_OK;
+    int32_t scsalen;
+    uint8_t scsa[32];
+
+
+    RELEASE_GIL();
+    scsalen = _gs_sms_get_scsa(scsa);
+    if (scsalen<0) scsalen = 0;
+    *res = pstring_new(scsalen,scsa);
     ACQUIRE_GIL();
     return err;
 }
 
+C_NATIVE(_bg96_sms_set_scsa){
+    NATIVE_UNWARN();
+    int32_t err = ERR_OK;
+    int32_t scsalen,rd;
+    uint8_t *scsa;
+    *res = PBOOL_TRUE();
+
+    if(parse_py_args("s",nargs,args,&scsa,&scsalen)!=1) return ERR_TYPE_EXC;
+
+    RELEASE_GIL();
+    rd = _gs_sms_set_scsa(scsa,scsalen);
+    ACQUIRE_GIL();
+
+    if (rd<0) *res = PBOOL_FALSE();
+    return err;
+}
+
+
+///////////////////////GNSS
+
+C_NATIVE(_bg96_gnss_init){
+    C_NATIVE_UNWARN();
+    int err = ERR_OK;
+    int use_uart3 = 0;
+    int gnss_rate;
+    *res = MAKE_NONE();
+
+    if(parse_py_args("ii",nargs,args,&gnss_rate,&use_uart3)!=2) return ERR_TYPE_EXC;
+
+    RELEASE_GIL();
+
+    if(!gs.running) err=ERR_PERIPHERAL_INVALID_HARDWARE_STATUS_EXC;
+    else
+    if(_gs_gnss_init(gnss_rate, use_uart3)!=0) err=ERR_RUNTIME_EXC;
+
+    ACQUIRE_GIL();
+    return err;
+}
 
 C_NATIVE(_bg96_gnss_done){
     C_NATIVE_UNWARN();
@@ -956,11 +1246,14 @@ C_NATIVE(_bg96_gnss_done){
     *res = MAKE_NONE();
 
     RELEASE_GIL();
-    if(_gs_gnss_done()) err=ERR_RUNTIME_EXC;
+
+    if(!gs.running) err=ERR_PERIPHERAL_INVALID_HARDWARE_STATUS_EXC;
+    else
+    if(_gs_gnss_done()!=0) err=ERR_RUNTIME_EXC;
+
     ACQUIRE_GIL();
     return err;
 }
-
 
 C_NATIVE(_bg96_gnss_fix){
     C_NATIVE_UNWARN();
@@ -998,4 +1291,3 @@ C_NATIVE(_bg96_gnss_fix){
     ACQUIRE_GIL();
     return err;
 }
-

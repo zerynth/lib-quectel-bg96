@@ -1,5 +1,4 @@
 #Quectel
     ##BG96
-        GNSS
         Secure_Socket
         UDP_Socket

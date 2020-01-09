@@ -9,7 +9,7 @@ import streams
 import socket
 # import the gsm interface
 from wireless import gsm
-from quectel.bg96 import bg96 as bg96
+from quectel.ug96 import ug96 as ug96
 
 # For this example to work, you need an UDP server somewhere on the public
 # internet. You can run this example (https://gist.github.com/Manouchehri/67b53ecdc767919dddf3ec4ea8098b20)
@@ -22,16 +22,16 @@ server_ip = "0.0.0.0"
 server_port = 7778
 
 try:
-    print("Initializing BG96...")
-    # init the bg96
+    print("Initializing UG96...")
+    # init the ug96
     # pins and serial port must be set according to your setup
-    bg96.init(SERIAL2, D27, D26, D21, D12, D25)
+    ug96.init(SERIAL3,D12,D13,D67,D60,D37,D38,0)
 
 
     # use the wifi interface to link to the Access Point
     # change network name, security and password as needed
     print("Establishing Link...")
-    gsm.attach("YOUR-APN-HERE")
+    gsm.attach("your-apn-name")
 
 
     print("Trying UDP socket in connect mode")
