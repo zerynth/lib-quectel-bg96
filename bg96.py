@@ -203,7 +203,7 @@ def startup(_from_gnss=False):
         sleep(600)
         gpio.set(_power_pin, HIGH^ _power_on)
 
-    for i in range(55):
+    for i in range(100):
         if gpio.get(_status_pin)==_status_on:
             # print("STA!")
             break

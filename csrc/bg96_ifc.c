@@ -361,8 +361,7 @@ C_NATIVE(_bg96_rssi){
  * @brief strings for network types (must have the same order as bits in GS_RAT_xxx)
  */
 /*const uint8_t * const _urats[] = { "","GSM","GPRS","LTE","LTE Cat M1","LTE Cat NB1" };*/
-uint8_t * _urats;
-#define MAX_URATS (sizeof(_urats)/sizeof(*_urats))
+#define MAX_URATS (sizeof(_urats_pos)/sizeof(*_urats_pos))
 
 /**
  * @brief _bg96_network_info retrieves network information through +URAT and *CGED
@@ -390,7 +389,7 @@ C_NATIVE(_bg96_network_info){
     // build RAT (radio access technology) string from static buffer
     // e.g. "GSM+LTE Cat M1"
     ratslen = 0;
-    for (p0=1,l0=1; p0<MAX_URATS; ++p0,l0<<=1) {
+    for (p0=0,l0=1; p0<MAX_URATS; ++p0,l0<<=1) {
         if (gs.tech & l0) {
             int len = _urats_len[p0];
             int pos = _urats_pos[p0];

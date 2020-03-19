@@ -13,7 +13,7 @@ from wireless import gsm
 import requests
 import ssl
 
-from quectel.ug96 import ug96 as ug96
+from quectel.bg96 import bg96 as bg96
 
 
 streams.serial()
@@ -22,7 +22,8 @@ try:
     print("Initializing UG96...")
     # init the ug96
     # pins and serial port must be set according to your setup
-    ug96.init(SERIAL3,D12,D13,D67,D60,D37,D38,0)
+    bg96.init(SERIAL2, D42, D42, D42, D42, D34,0,1,1)
+    bg96.startup()
 
 
     # change APN name as needed

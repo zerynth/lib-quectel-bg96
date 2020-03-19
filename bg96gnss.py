@@ -66,12 +66,14 @@ class BG96_GNSS(nmea.NMEA_Receiver):
             pinMode(self.antpin, OUTPUT)
             digitalWrite(self.antpin, HIGH^ self.antval)
 
-    def start(self):
+    def start(self, use_uart = 1):
         """
 .. method:: start()
 
         Start the BG96 GNSS and the receiver thread.
 
+        :param use_uart: 1 if BG96's UART3 must be used, 0 otherwise
+        
         :returns: *True* if receiver thread has been started, *False* if already active.
 
         """
@@ -86,7 +88,7 @@ class BG96_GNSS(nmea.NMEA_Receiver):
         self.running = True
         self.talking = True
         self.th = thread(self._run)
-        bg96.gnss_init(fix_rate=self.fixrate,use_uart=1)
+        bg96.gnss_init(fix_rate=self.fixrate,use_uart = use_uart)
         sleep(1000)
         return True
 
