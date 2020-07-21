@@ -1,10 +1,11 @@
 #include "zerynth.h"
+#include "zerynth_sockets.h"
 #include "bg96.h"
 
 //a reference to a Python exception to be returned on error (bg96Exception)
 int32_t bg96exc;
 
-#if 0
+#if 1
 #define printf(...) vbl_printf_stdout(__VA_ARGS__)
 #define print_buffer(bf, ln) 	for(uint8_t i = 0; i < ln; i++) { \
 					printf("%c", bf[i]); \
@@ -68,15 +69,15 @@ C_NATIVE(_bg96_init){
     bg96_api.close = bg96_gzsock_close;
     bg96_api.shutdown = bg96_gzsock_shutdown;
     bg96_api.bind = bg96_gzsock_bind;
-    bg96_api.accept = NULL;
-    bg96_api.listen = NULL;
+    bg96_api.accept = bg96_gzsock_accept;
+    bg96_api.listen = bg96_gzsock_listen;
     bg96_api.select = bg96_gzsock_select;
     bg96_api.fcntl = bg96_gzsock_fcntl;
-    bg96_api.ioctl = NULL;
+    bg96_api.ioctl = bg96_gzsock_ioctl;
     bg96_api.getaddrinfo = bg96_gzsock_getaddrinfo;
     bg96_api.freeaddrinfo = bg96_gzsock_freeaddrinfo;
-    bg96_api.inet_addr = NULL;
-    bg96_api.inet_ntoa = NULL;
+    bg96_api.inet_addr = bg96_gzsock_inet_addr;
+    bg96_api.inet_ntoa = bg96_gzsock_inet_ntoa;
 
     printf("After init\n");
     gzsock_init(&bg96_api);
@@ -494,515 +495,515 @@ C_NATIVE(_bg96_link_info){
 
 
 
-#define DRV_SOCK_DGRAM 1
-#define DRV_SOCK_STREAM 0
-#define DRV_AF_INET 0
+// #define DRV_SOCK_DGRAM 1
+// #define DRV_SOCK_STREAM 0
+// #define DRV_AF_INET 0
 
-C_NATIVE(_bg96_socket_create){
-    NATIVE_UNWARN();
-    int32_t family;
-    int32_t type;
-    int32_t proto;
-    if (parse_py_args("III", nargs, args, DRV_AF_INET, &family, DRV_SOCK_STREAM, &type, 6 /*tcp*/, &proto) != 3) return ERR_TYPE_EXC;
-    if (type != DRV_SOCK_DGRAM && type != DRV_SOCK_STREAM)
-        return ERR_TYPE_EXC;
-    if (family != DRV_AF_INET)
-        return ERR_UNSUPPORTED_EXC;
+// C_NATIVE(_bg96_socket_create){
+//     NATIVE_UNWARN();
+//     int32_t family;
+//     int32_t type;
+//     int32_t proto;
+//     if (parse_py_args("III", nargs, args, DRV_AF_INET, &family, DRV_SOCK_STREAM, &type, 6 /*tcp*/, &proto) != 3) return ERR_TYPE_EXC;
+//     if (type != DRV_SOCK_DGRAM && type != DRV_SOCK_STREAM)
+//         return ERR_TYPE_EXC;
+//     if (family != DRV_AF_INET)
+//         return ERR_UNSUPPORTED_EXC;
 
-    RELEASE_GIL();
-    int32_t sock_id = gzsock_socket(
-          family,
-          type + 1,
-          proto,
-          NULL);
-    ACQUIRE_GIL();
-    if(sock_id<0) {
-        return ERR_IOERROR_EXC;
-    } 
-    *res = PSMALLINT_NEW(sock_id);
-    return ERR_OK;
-}
+//     RELEASE_GIL();
+//     int32_t sock_id = gzsock_socket(
+//           family,
+//           type + 1,
+//           proto,
+//           NULL);
+//     ACQUIRE_GIL();
+//     if(sock_id<0) {
+//         return ERR_IOERROR_EXC;
+//     } 
+//     *res = PSMALLINT_NEW(sock_id);
+//     return ERR_OK;
+// }
 
-C_NATIVE(_bg96_socket_connect) {
-    C_NATIVE_UNWARN();
-    int32_t sock,ret;
-    NetAddress netaddr;
-    struct sockaddr_in addr;
+// C_NATIVE(_bg96_socket_connect) {
+//     C_NATIVE_UNWARN();
+//     int32_t sock,ret;
+//     NetAddress netaddr;
+//     struct sockaddr_in addr;
 
-    if (parse_py_args("in", nargs, args, &sock, &netaddr) != 2)
-        return ERR_TYPE_EXC;
+//     if (parse_py_args("in", nargs, args, &sock, &netaddr) != 2)
+//         return ERR_TYPE_EXC;
 
-    addr.sin_family = AF_INET;
-    addr.sin_port = netaddr.port;
-    addr.sin_addr.s_addr = netaddr.ip;
+//     addr.sin_family = AF_INET;
+//     addr.sin_port = netaddr.port;
+//     addr.sin_addr.s_addr = netaddr.ip;
 
-    *res = MAKE_NONE();
+//     *res = MAKE_NONE();
 
-    RELEASE_GIL();
-    ret = gzsock_connect(sock, (struct sockaddr *) &addr, sizeof(addr));
-    ACQUIRE_GIL();
+//     RELEASE_GIL();
+//     ret = gzsock_connect(sock, (struct sockaddr *) &addr, sizeof(addr));
+//     ACQUIRE_GIL();
 
-    if (ret < 0) {
-        return ERR_CONNECTION_REF_EXC;
-    }
+//     if (ret < 0) {
+//         return ERR_CONNECTION_REF_EXC;
+//     }
 
-    return ERR_OK;
-}
+//     return ERR_OK;
+// }
 
-C_NATIVE(_bg96_socket_close) {
-    C_NATIVE_UNWARN();
-    int32_t sock;
-    int ret;
-    if (parse_py_args("i", nargs, args, &sock) != 1)
-        return ERR_TYPE_EXC;
-    RELEASE_GIL();
-    ret = gzsock_close(sock);
-    ACQUIRE_GIL();
-    *res = PSMALLINT_NEW(ret);
-    return ERR_OK;
-}
+// C_NATIVE(_bg96_socket_close) {
+//     C_NATIVE_UNWARN();
+//     int32_t sock;
+//     int ret;
+//     if (parse_py_args("i", nargs, args, &sock) != 1)
+//         return ERR_TYPE_EXC;
+//     RELEASE_GIL();
+//     ret = gzsock_close(sock);
+//     ACQUIRE_GIL();
+//     *res = PSMALLINT_NEW(ret);
+//     return ERR_OK;
+// }
 
-C_NATIVE(_bg96_socket_send) {
-    C_NATIVE_UNWARN();
-    uint8_t *buf;
-    int32_t len;
-    int32_t flags;
-    int32_t sock;
-    int ret;
-    if (parse_py_args("isi", nargs, args,
-                &sock,
-                &buf, &len,
-                &flags) != 3) return ERR_TYPE_EXC;
+// C_NATIVE(_bg96_socket_send) {
+//     C_NATIVE_UNWARN();
+//     uint8_t *buf;
+//     int32_t len;
+//     int32_t flags;
+//     int32_t sock;
+//     int ret;
+//     if (parse_py_args("isi", nargs, args,
+//                 &sock,
+//                 &buf, &len,
+//                 &flags) != 3) return ERR_TYPE_EXC;
 
-    RELEASE_GIL();
-    ret = gzsock_send(sock, buf, len, flags);
-    ACQUIRE_GIL();
+//     RELEASE_GIL();
+//     ret = gzsock_send(sock, buf, len, flags);
+//     ACQUIRE_GIL();
 
-    if (ret<0) return ERR_IOERROR_EXC;
-    *res = PSMALLINT_NEW((uint32_t)ret);
-    return ERR_OK;
-}
+//     if (ret<0) return ERR_IOERROR_EXC;
+//     *res = PSMALLINT_NEW((uint32_t)ret);
+//     return ERR_OK;
+// }
 
-C_NATIVE(_bg96_socket_sendto){
-    C_NATIVE_UNWARN();
-    uint8_t* buf;
-    int32_t len;
-    int32_t flags;
-    int32_t sock;
-    int32_t wrt=0;
-    int32_t tsnd;
-    int32_t ret;
-    NetAddress netaddr;
+// C_NATIVE(_bg96_socket_sendto){
+//     C_NATIVE_UNWARN();
+//     uint8_t* buf;
+//     int32_t len;
+//     int32_t flags;
+//     int32_t sock;
+//     int32_t wrt=0;
+//     int32_t tsnd;
+//     int32_t ret;
+//     NetAddress netaddr;
 
-    if (parse_py_args("isni", nargs, args,
-            &sock,
-            &buf, &len,
-            &netaddr,
-            &flags)
-        != 4)
-        return ERR_TYPE_EXC;
+//     if (parse_py_args("isni", nargs, args,
+//             &sock,
+//             &buf, &len,
+//             &netaddr,
+//             &flags)
+//         != 4)
+//         return ERR_TYPE_EXC;
 
-    struct sockaddr_in addr;
+//     struct sockaddr_in addr;
 
-    addr.sin_family = AF_INET;
-    addr.sin_port = netaddr.port;
-    addr.sin_addr.s_addr = netaddr.ip;
+//     addr.sin_family = AF_INET;
+//     addr.sin_port = netaddr.port;
+//     addr.sin_addr.s_addr = netaddr.ip;
 
-    RELEASE_GIL();
-    ret = gzsock_sendto(sock, buf, len, flags, (struct sockaddr *) &addr, sizeof(addr));
-    ACQUIRE_GIL();
-    if (ret<0) return ERR_IOERROR_EXC;
-    *res = PSMALLINT_NEW((uint32_t)ret);
-    return ERR_OK;
-}
+//     RELEASE_GIL();
+//     ret = gzsock_sendto(sock, buf, len, flags, (struct sockaddr *) &addr, sizeof(addr));
+//     ACQUIRE_GIL();
+//     if (ret<0) return ERR_IOERROR_EXC;
+//     *res = PSMALLINT_NEW((uint32_t)ret);
+//     return ERR_OK;
+// }
 
-C_NATIVE(_bg96_socket_recv_into){
-    C_NATIVE_UNWARN();
-    uint8_t* buf;
-    int32_t len;
-    int32_t sz;
-    int32_t flags;
-    int32_t ofs;
-    int32_t sock;
-    int ret;
+// C_NATIVE(_bg96_socket_recv_into){
+//     C_NATIVE_UNWARN();
+//     uint8_t* buf;
+//     int32_t len;
+//     int32_t sz;
+//     int32_t flags;
+//     int32_t ofs;
+//     int32_t sock;
+//     int ret;
 
-    if (parse_py_args("isiiI", nargs, args,
-            &sock,
-            &buf, &len,
-            &sz,
-            &flags,
-            0,
-            &ofs)
-        != 5)
-        return ERR_TYPE_EXC;
-    buf += ofs;
-    len -= ofs;
-    len = (sz < len) ? sz : len;
-    RELEASE_GIL();
-    ret = gzsock_recv(sock, buf, len, flags);
-    ACQUIRE_GIL();
-    printf("requested %i from %i, returned %i\n",len,sock,ret);
-    if (ret<0) {
-        if (ret == ERR_TIMEOUT) {
-            return ERR_TIMEOUT_EXC;
-        } 
-#if defined ZERYNTH_SSL || defined NATIVE_MBEDTLS
-        else if (ret == MBEDTLS_ERR_SSL_TIMEOUT){
-            return ERR_TIMEOUT_EXC;
-        }
-#endif
-        else {
-            return ERR_IOERROR_EXC;
-        }
-    }
+//     if (parse_py_args("isiiI", nargs, args,
+//             &sock,
+//             &buf, &len,
+//             &sz,
+//             &flags,
+//             0,
+//             &ofs)
+//         != 5)
+//         return ERR_TYPE_EXC;
+//     buf += ofs;
+//     len -= ofs;
+//     len = (sz < len) ? sz : len;
+//     RELEASE_GIL();
+//     ret = gzsock_recv(sock, buf, len, flags);
+//     ACQUIRE_GIL();
+//     printf("requested %i from %i, returned %i\n",len,sock,ret);
+//     if (ret<0) {
+//         if (ret == ERR_TIMEOUT) {
+//             return ERR_TIMEOUT_EXC;
+//         } 
+// #if defined ZERYNTH_SSL || defined NATIVE_MBEDTLS
+//         else if (ret == MBEDTLS_ERR_SSL_TIMEOUT){
+//             return ERR_TIMEOUT_EXC;
+//         }
+// #endif
+//         else {
+//             return ERR_IOERROR_EXC;
+//         }
+//     }
     
-    *res = PSMALLINT_NEW((uint32_t)ret);
-    return ERR_OK;
-}
+//     *res = PSMALLINT_NEW((uint32_t)ret);
+//     return ERR_OK;
+// }
 
-C_NATIVE(_bg96_socket_recvfrom_into){
-    C_NATIVE_UNWARN();
-    uint8_t* buf;
-    int32_t len;
-    int32_t sz;
-    int32_t flags;
-    int32_t ofs;
-    int32_t sock;
-    int ret;
+// C_NATIVE(_bg96_socket_recvfrom_into){
+//     C_NATIVE_UNWARN();
+//     uint8_t* buf;
+//     int32_t len;
+//     int32_t sz;
+//     int32_t flags;
+//     int32_t ofs;
+//     int32_t sock;
+//     int ret;
 
-    PString *oaddr = NULL;
-    int32_t port;
+//     PString *oaddr = NULL;
+//     int32_t port;
 
-    struct sockaddr_in addr;
+//     struct sockaddr_in addr;
 
-    if (parse_py_args("isiiI", nargs, args,
-            &sock,
-            &buf, &len,
-            &sz,
-            &flags,
-            0,
-            &ofs)
-        != 5)
-        return ERR_TYPE_EXC;
-    buf += ofs;
-    len -= ofs;
-    len = (sz < len) ? sz : len;
-    RELEASE_GIL();
-    ret = gzsock_recvfrom(sock, buf, len, flags,  (struct sockaddr *) &addr, sizeof(addr));
-    ACQUIRE_GIL();
-    if(ret>=0){
-        uint8_t remote_ip[16];
-        int saddrlen;
-        saddrlen = zs_addr_to_string(&addr,remote_ip);
-        PTuple* tpl = (PTuple*)psequence_new(PTUPLE, 2);
-        PTUPLE_SET_ITEM(tpl, 0, PSMALLINT_NEW(ret));
-        oaddr = pstring_new(saddrlen,remote_ip);
-        PTuple* ipo = ptuple_new(2,NULL);
-        PTUPLE_SET_ITEM(ipo,0,oaddr);
-        PTUPLE_SET_ITEM(ipo,1,PSMALLINT_NEW(OAL_GET_NETPORT(addr.sin_port)));
-        PTUPLE_SET_ITEM(tpl, 1, ipo);
-        *res = tpl;
-    }
-    return ERR_OK;
-}
-
-
-
-C_NATIVE(_bg96_socket_bind){
-    C_NATIVE_UNWARN();
-    int32_t sock;
-    NetAddress netaddr;
-    struct sockaddr_in addr;
-    int ret;
-    if (parse_py_args("in", nargs, args, &sock, &netaddr) != 2)
-        return ERR_TYPE_EXC;
-
-    addr.sin_family = AF_INET;
-    addr.sin_port = netaddr.port;
-    addr.sin_addr.s_addr = netaddr.ip;
-    RELEASE_GIL();
-    ret = gzsock_bind(sock,&addr,sizeof(addr));
-    ACQUIRE_GIL();
-    if(ret<0) {
-        return ERR_IOERROR_EXC;
-    }
-    *res = MAKE_NONE();
-    return ERR_OK;
-}
+//     if (parse_py_args("isiiI", nargs, args,
+//             &sock,
+//             &buf, &len,
+//             &sz,
+//             &flags,
+//             0,
+//             &ofs)
+//         != 5)
+//         return ERR_TYPE_EXC;
+//     buf += ofs;
+//     len -= ofs;
+//     len = (sz < len) ? sz : len;
+//     RELEASE_GIL();
+//     ret = gzsock_recvfrom(sock, buf, len, flags,  (struct sockaddr *) &addr, sizeof(addr));
+//     ACQUIRE_GIL();
+//     if(ret>=0){
+//         uint8_t remote_ip[16];
+//         int saddrlen;
+//         saddrlen = zs_addr_to_string(&addr,remote_ip);
+//         PTuple* tpl = (PTuple*)psequence_new(PTUPLE, 2);
+//         PTUPLE_SET_ITEM(tpl, 0, PSMALLINT_NEW(ret));
+//         oaddr = pstring_new(saddrlen,remote_ip);
+//         PTuple* ipo = ptuple_new(2,NULL);
+//         PTUPLE_SET_ITEM(ipo,0,oaddr);
+//         PTUPLE_SET_ITEM(ipo,1,PSMALLINT_NEW(OAL_GET_NETPORT(addr.sin_port)));
+//         PTUPLE_SET_ITEM(tpl, 1, ipo);
+//         *res = tpl;
+//     }
+//     return ERR_OK;
+// }
 
 
-C_NATIVE(_bg96_socket_select){
-    C_NATIVE_UNWARN();
-    int32_t timeout;
-    int32_t tmp, i, j, sock = -1,ret;
 
-    if (nargs < 4)
-    return ERR_TYPE_EXC;
+// C_NATIVE(_bg96_socket_bind){
+//     C_NATIVE_UNWARN();
+//     int32_t sock;
+//     NetAddress netaddr;
+//     struct sockaddr_in addr;
+//     int ret;
+//     if (parse_py_args("in", nargs, args, &sock, &netaddr) != 2)
+//         return ERR_TYPE_EXC;
 
-    fd_set rfd;
-    fd_set wfd;
-    fd_set xfd;
-    struct timeval tms;
-    struct timeval *ptm;
-    PObject *rlist = args[0];
-    PObject *wlist = args[1];
-    PObject *xlist = args[2];
-    fd_set *fdsets[3] = {&rfd, &wfd, &xfd};
-    PObject *slist[3] = {rlist, wlist, xlist};
-    PObject *tm = args[3];
+//     addr.sin_family = AF_INET;
+//     addr.sin_port = netaddr.port;
+//     addr.sin_addr.s_addr = netaddr.ip;
+//     RELEASE_GIL();
+//     ret = gzsock_bind(sock,&addr,sizeof(addr));
+//     ACQUIRE_GIL();
+//     if(ret<0) {
+//         return ERR_IOERROR_EXC;
+//     }
+//     *res = MAKE_NONE();
+//     return ERR_OK;
+// }
 
 
-    if (tm == MAKE_NONE()) {
-        ptm = NULL;
-    } else if (IS_PSMALLINT(tm)) {
-        timeout = PSMALLINT_VALUE(tm);
-        if (timeout < 0)
-            return ERR_TYPE_EXC;
-        tms.tv_sec = timeout / 1000;
-        tms.tv_usec = (timeout % 1000) * 1000;
-        ptm = &tms;
-    } else return ERR_TYPE_EXC;
+// C_NATIVE(_bg96_socket_select){
+//     C_NATIVE_UNWARN();
+//     int32_t timeout;
+//     int32_t tmp, i, j, sock = -1,ret;
 
-    for (j = 0; j < 3; j++) {
-        tmp = PTYPE(slist[j]);
-        if (!IS_OBJ_PSEQUENCE_TYPE(tmp))
-            return ERR_TYPE_EXC;
-        FD_ZERO (fdsets[j]);
-        for (i = 0; i < PSEQUENCE_ELEMENTS(slist[j]); i++) {
-            PObject *fd = PSEQUENCE_OBJECTS(slist[j])[i];
-            if (IS_PSMALLINT(fd)) {
-                //printf("%i -> %i\n",j,PSMALLINT_VALUE(fd));
-                FD_SET(PSMALLINT_VALUE(fd), fdsets[j]);
-                if (PSMALLINT_VALUE(fd) > sock)
-                    sock = PSMALLINT_VALUE(fd);
-            } else return ERR_TYPE_EXC;
-        }
-    }
+//     if (nargs < 4)
+//     return ERR_TYPE_EXC;
 
-    printf("maxsock %i\n", sock);
+//     fd_set rfd;
+//     fd_set wfd;
+//     fd_set xfd;
+//     struct timeval tms;
+//     struct timeval *ptm;
+//     PObject *rlist = args[0];
+//     PObject *wlist = args[1];
+//     PObject *xlist = args[2];
+//     fd_set *fdsets[3] = {&rfd, &wfd, &xfd};
+//     PObject *slist[3] = {rlist, wlist, xlist};
+//     PObject *tm = args[3];
 
-    RELEASE_GIL();
-    ret = gzsock_select( (sock + 1), fdsets[0], fdsets[1], fdsets[2], ptm );
-    ACQUIRE_GIL();
 
-    printf("result: %i\n", ret);
+//     if (tm == MAKE_NONE()) {
+//         ptm = NULL;
+//     } else if (IS_PSMALLINT(tm)) {
+//         timeout = PSMALLINT_VALUE(tm);
+//         if (timeout < 0)
+//             return ERR_TYPE_EXC;
+//         tms.tv_sec = timeout / 1000;
+//         tms.tv_usec = (timeout % 1000) * 1000;
+//         ptm = &tms;
+//     } else return ERR_TYPE_EXC;
 
-    if (ret < 0) {
-        return ERR_IOERROR_EXC;
-    }
+//     for (j = 0; j < 3; j++) {
+//         tmp = PTYPE(slist[j]);
+//         if (!IS_OBJ_PSEQUENCE_TYPE(tmp))
+//             return ERR_TYPE_EXC;
+//         FD_ZERO (fdsets[j]);
+//         for (i = 0; i < PSEQUENCE_ELEMENTS(slist[j]); i++) {
+//             PObject *fd = PSEQUENCE_OBJECTS(slist[j])[i];
+//             if (IS_PSMALLINT(fd)) {
+//                 //printf("%i -> %i\n",j,PSMALLINT_VALUE(fd));
+//                 FD_SET(PSMALLINT_VALUE(fd), fdsets[j]);
+//                 if (PSMALLINT_VALUE(fd) > sock)
+//                     sock = PSMALLINT_VALUE(fd);
+//             } else return ERR_TYPE_EXC;
+//         }
+//     }
 
-    PTuple *tpl = (PTuple *) psequence_new(PTUPLE, 3);
-    for (j = 0; j < 3; j++) {
-        tmp = 0;
-        for (i = 0; i <= sock; i++) {
-            if (FD_ISSET(i, fdsets[j])) tmp++;
-        }
-        PTuple *rtpl = psequence_new(PTUPLE, tmp);
-        tmp = 0;
-        for (i = 0; i <= sock; i++) {
-            //printf("sock %i in %i = %i\n",i,j,FD_ISSET(i, fdsets[j]));
-            if (FD_ISSET(i, fdsets[j])) {
-                PTUPLE_SET_ITEM(rtpl, tmp, PSMALLINT_NEW(i));
-                tmp++;
-            }
-        }
-        PTUPLE_SET_ITEM(tpl, j, rtpl);
-    }
-    *res = tpl;
-    return ERR_OK;
+//     printf("maxsock %i\n", sock);
 
-}
+//     RELEASE_GIL();
+//     ret = gzsock_select( (sock + 1), fdsets[0], fdsets[1], fdsets[2], ptm );
+//     ACQUIRE_GIL();
 
-// /////////////////////SSL/TLS
+//     printf("result: %i\n", ret);
 
-#define _CERT_NONE 1
-#define _CERT_OPTIONAL 2
-#define _CERT_REQUIRED 4
-#define _CLIENT_AUTH 8
-#define _SERVER_AUTH 16
+//     if (ret < 0) {
+//         return ERR_IOERROR_EXC;
+//     }
 
-C_NATIVE(_bg96_secure_socket) {
-    C_NATIVE_UNWARN();
-#if defined ZERYNTH_SSL || defined NATIVE_MBEDTLS
-    int32_t err = ERR_OK;
-    int32_t sock;
-    int32_t i;
-    SSLInfo nfo;
+//     PTuple *tpl = (PTuple *) psequence_new(PTUPLE, 3);
+//     for (j = 0; j < 3; j++) {
+//         tmp = 0;
+//         for (i = 0; i <= sock; i++) {
+//             if (FD_ISSET(i, fdsets[j])) tmp++;
+//         }
+//         PTuple *rtpl = psequence_new(PTUPLE, tmp);
+//         tmp = 0;
+//         for (i = 0; i <= sock; i++) {
+//             //printf("sock %i in %i = %i\n",i,j,FD_ISSET(i, fdsets[j]));
+//             if (FD_ISSET(i, fdsets[j])) {
+//                 PTUPLE_SET_ITEM(rtpl, tmp, PSMALLINT_NEW(i));
+//                 tmp++;
+//             }
+//         }
+//         PTUPLE_SET_ITEM(tpl, j, rtpl);
+//     }
+//     *res = tpl;
+//     return ERR_OK;
 
-    int32_t family = DRV_AF_INET;
-    int32_t type = DRV_SOCK_STREAM;
-    int32_t proto = 6;
-    int32_t ssocknum = 0;
-    int32_t ctxlen;
-    uint8_t* certbuf = NULL;
-    uint16_t certlen = 0;
-    uint8_t* clibuf = NULL;
-    uint16_t clilen = 0;
-    uint8_t* pkeybuf = NULL;
-    uint16_t pkeylen = 0;
-    uint32_t options = _CLIENT_AUTH | _CERT_NONE;
-    uint8_t* hostbuf = NULL;
-    uint16_t hostlen = 0;
+// }
 
-    PTuple* ctx;
-    memset(&nfo,0,sizeof(nfo));
-    ctx = (PTuple*)args[nargs - 1];
-    nargs--;
+// // /////////////////////SSL/TLS
+
+// #define _CERT_NONE 1
+// #define _CERT_OPTIONAL 2
+// #define _CERT_REQUIRED 4
+// #define _CLIENT_AUTH 8
+// #define _SERVER_AUTH 16
+
+// C_NATIVE(_bg96_secure_socket) {
+//     C_NATIVE_UNWARN();
+// #if defined ZERYNTH_SSL || defined NATIVE_MBEDTLS
+//     int32_t err = ERR_OK;
+//     int32_t sock;
+//     int32_t i;
+//     SSLInfo nfo;
+
+//     int32_t family = DRV_AF_INET;
+//     int32_t type = DRV_SOCK_STREAM;
+//     int32_t proto = 6;
+//     int32_t ssocknum = 0;
+//     int32_t ctxlen;
+//     uint8_t* certbuf = NULL;
+//     uint16_t certlen = 0;
+//     uint8_t* clibuf = NULL;
+//     uint16_t clilen = 0;
+//     uint8_t* pkeybuf = NULL;
+//     uint16_t pkeylen = 0;
+//     uint32_t options = _CLIENT_AUTH | _CERT_NONE;
+//     uint8_t* hostbuf = NULL;
+//     uint16_t hostlen = 0;
+
+//     PTuple* ctx;
+//     memset(&nfo,0,sizeof(nfo));
+//     ctx = (PTuple*)args[nargs - 1];
+//     nargs--;
     
-    if (parse_py_args("III", nargs, args, DRV_AF_INET, &family, DRV_SOCK_STREAM, &type, 6, &proto) != 3){
-        return ERR_TYPE_EXC;
-    }
-    if (type != DRV_SOCK_DGRAM && type != DRV_SOCK_STREAM){
-        return ERR_TYPE_EXC;
-    }
-    if (family != DRV_AF_INET)
-        return ERR_UNSUPPORTED_EXC;
-    if(proto!=6)
-        return ERR_UNSUPPORTED_EXC;
+//     if (parse_py_args("III", nargs, args, DRV_AF_INET, &family, DRV_SOCK_STREAM, &type, 6, &proto) != 3){
+//         return ERR_TYPE_EXC;
+//     }
+//     if (type != DRV_SOCK_DGRAM && type != DRV_SOCK_STREAM){
+//         return ERR_TYPE_EXC;
+//     }
+//     if (family != DRV_AF_INET)
+//         return ERR_UNSUPPORTED_EXC;
+//     if(proto!=6)
+//         return ERR_UNSUPPORTED_EXC;
 
-    ctxlen = PSEQUENCE_ELEMENTS(ctx);
-    if (ctxlen && ctxlen != 5)
-        return ERR_TYPE_EXC;
+//     ctxlen = PSEQUENCE_ELEMENTS(ctx);
+//     if (ctxlen && ctxlen != 5)
+//         return ERR_TYPE_EXC;
 
-    if (ctxlen) {
-        //ssl context passed
-        PObject* cacert = PTUPLE_ITEM(ctx, 0);
-        PObject* clicert = PTUPLE_ITEM(ctx, 1);
-        PObject* ppkey = PTUPLE_ITEM(ctx, 2);
-        PObject* host = PTUPLE_ITEM(ctx, 3);
-        PObject* iopts = PTUPLE_ITEM(ctx, 4);
+//     if (ctxlen) {
+//         //ssl context passed
+//         PObject* cacert = PTUPLE_ITEM(ctx, 0);
+//         PObject* clicert = PTUPLE_ITEM(ctx, 1);
+//         PObject* ppkey = PTUPLE_ITEM(ctx, 2);
+//         PObject* host = PTUPLE_ITEM(ctx, 3);
+//         PObject* iopts = PTUPLE_ITEM(ctx, 4);
 
-        nfo.cacert = PSEQUENCE_BYTES(cacert);
-        nfo.cacert_len = PSEQUENCE_ELEMENTS(cacert);
-        nfo.clicert = PSEQUENCE_BYTES(clicert);
-        nfo.clicert_len = PSEQUENCE_ELEMENTS(clicert);
-        nfo.hostname = PSEQUENCE_BYTES(host);
-        nfo.hostname_len = PSEQUENCE_ELEMENTS(host);
-        nfo.pvkey = PSEQUENCE_BYTES(ppkey);
-        nfo.pvkey_len = PSEQUENCE_ELEMENTS(ppkey);
-        nfo.options = PSMALLINT_VALUE(iopts);
-    }
-    RELEASE_GIL();
-    sock = gzsock_socket(
-          family,
-          type,
-          proto,
-          (ctxlen) ? &nfo:NULL);
-    ACQUIRE_GIL();
-    printf("CMD_SOCKET: %i %i\n", sock, type);
-    if (sock < 0)
-      return ERR_IOERROR_EXC;
-    *res = PSMALLINT_NEW(sock);
-    return ERR_OK;    
+//         nfo.cacert = PSEQUENCE_BYTES(cacert);
+//         nfo.cacert_len = PSEQUENCE_ELEMENTS(cacert);
+//         nfo.clicert = PSEQUENCE_BYTES(clicert);
+//         nfo.clicert_len = PSEQUENCE_ELEMENTS(clicert);
+//         nfo.hostname = PSEQUENCE_BYTES(host);
+//         nfo.hostname_len = PSEQUENCE_ELEMENTS(host);
+//         nfo.pvkey = PSEQUENCE_BYTES(ppkey);
+//         nfo.pvkey_len = PSEQUENCE_ELEMENTS(ppkey);
+//         nfo.options = PSMALLINT_VALUE(iopts);
+//     }
+//     RELEASE_GIL();
+//     sock = gzsock_socket(
+//           family,
+//           type,
+//           proto,
+//           (ctxlen) ? &nfo:NULL);
+//     ACQUIRE_GIL();
+//     printf("CMD_SOCKET: %i %i\n", sock, type);
+//     if (sock < 0)
+//       return ERR_IOERROR_EXC;
+//     *res = PSMALLINT_NEW(sock);
+//     return ERR_OK;    
 
-#else 
-    int32_t err = ERR_OK;
-    int32_t family = DRV_AF_INET;
-    int32_t type = DRV_SOCK_STREAM;
-    int32_t proto = 6;
-    int32_t sock;
-    int32_t i;
-    int32_t ssocknum = 0;
-    int32_t ctxlen;
-    uint8_t* certbuf = NULL;
-    uint16_t certlen = 0;
-    uint8_t* clibuf = NULL;
-    uint16_t clilen = 0;
-    uint8_t* pkeybuf = NULL;
-    uint16_t pkeylen = 0;
-    uint32_t options = _CLIENT_AUTH | _CERT_NONE;
-    uint8_t* hostbuf = NULL;
-    uint16_t hostlen = 0;
-    int amode;
+// #else 
+//     int32_t err = ERR_OK;
+//     int32_t family = DRV_AF_INET;
+//     int32_t type = DRV_SOCK_STREAM;
+//     int32_t proto = 6;
+//     int32_t sock;
+//     int32_t i;
+//     int32_t ssocknum = 0;
+//     int32_t ctxlen;
+//     uint8_t* certbuf = NULL;
+//     uint16_t certlen = 0;
+//     uint8_t* clibuf = NULL;
+//     uint16_t clilen = 0;
+//     uint8_t* pkeybuf = NULL;
+//     uint16_t pkeylen = 0;
+//     uint32_t options = _CLIENT_AUTH | _CERT_NONE;
+//     uint8_t* hostbuf = NULL;
+//     uint16_t hostlen = 0;
+//     int amode;
 
-    PTuple* ctx;
-    ctx = (PTuple*)args[nargs - 1];
-    nargs--;
-    if (parse_py_args("III", nargs, args, DRV_AF_INET, &family, DRV_SOCK_STREAM, &type, 6, &proto) != 3){
-        return ERR_TYPE_EXC;
-    }
-    if (type != DRV_SOCK_DGRAM && type != DRV_SOCK_STREAM){
-        return ERR_TYPE_EXC;
-    }
-    if (family != DRV_AF_INET)
-        return ERR_UNSUPPORTED_EXC;
-    if(proto!=6)
-        return ERR_UNSUPPORTED_EXC;
+//     PTuple* ctx;
+//     ctx = (PTuple*)args[nargs - 1];
+//     nargs--;
+//     if (parse_py_args("III", nargs, args, DRV_AF_INET, &family, DRV_SOCK_STREAM, &type, 6, &proto) != 3){
+//         return ERR_TYPE_EXC;
+//     }
+//     if (type != DRV_SOCK_DGRAM && type != DRV_SOCK_STREAM){
+//         return ERR_TYPE_EXC;
+//     }
+//     if (family != DRV_AF_INET)
+//         return ERR_UNSUPPORTED_EXC;
+//     if(proto!=6)
+//         return ERR_UNSUPPORTED_EXC;
 
-    ctxlen = PSEQUENCE_ELEMENTS(ctx);
-    if (ctxlen && ctxlen != 5)
-        return ERR_TYPE_EXC;
+//     ctxlen = PSEQUENCE_ELEMENTS(ctx);
+//     if (ctxlen && ctxlen != 5)
+//         return ERR_TYPE_EXC;
 
-    if (ctxlen) {
-        //ssl context passed
-        PObject* cacert = PTUPLE_ITEM(ctx, 0);
-        PObject* clicert = PTUPLE_ITEM(ctx, 1);
-        PObject* ppkey = PTUPLE_ITEM(ctx, 2);
-        PObject* host = PTUPLE_ITEM(ctx, 3);
-        PObject* iopts = PTUPLE_ITEM(ctx, 4);
-        certbuf = PSEQUENCE_BYTES(cacert);
-        certlen = PSEQUENCE_ELEMENTS(cacert);
-        clibuf = PSEQUENCE_BYTES(clicert);
-        clilen = PSEQUENCE_ELEMENTS(clicert);
-        hostbuf = PSEQUENCE_BYTES(host);
-        hostlen = PSEQUENCE_ELEMENTS(host);
-        pkeybuf = PSEQUENCE_BYTES(ppkey);
-        pkeylen = PSEQUENCE_ELEMENTS(ppkey);
-        options = PSMALLINT_VALUE(iopts);
-    }
+//     if (ctxlen) {
+//         //ssl context passed
+//         PObject* cacert = PTUPLE_ITEM(ctx, 0);
+//         PObject* clicert = PTUPLE_ITEM(ctx, 1);
+//         PObject* ppkey = PTUPLE_ITEM(ctx, 2);
+//         PObject* host = PTUPLE_ITEM(ctx, 3);
+//         PObject* iopts = PTUPLE_ITEM(ctx, 4);
+//         certbuf = PSEQUENCE_BYTES(cacert);
+//         certlen = PSEQUENCE_ELEMENTS(cacert);
+//         clibuf = PSEQUENCE_BYTES(clicert);
+//         clilen = PSEQUENCE_ELEMENTS(clicert);
+//         hostbuf = PSEQUENCE_BYTES(host);
+//         hostlen = PSEQUENCE_ELEMENTS(host);
+//         pkeybuf = PSEQUENCE_BYTES(ppkey);
+//         pkeylen = PSEQUENCE_ELEMENTS(ppkey);
+//         options = PSMALLINT_VALUE(iopts);
+//     }
 
-    GSocket* sslsock = NULL;
+//     GSocket* sslsock = NULL;
 
 
-    RELEASE_GIL();
-    sock = _gs_socket_new(proto,1);  //request secure socket
-    if(sock<0) {
-        err = ERR_IOERROR_EXC;
-        *res = MAKE_NONE();
-    } else {
-        *res = PSMALLINT_NEW(sock);
-        err = ERR_OK;
-    }
-    if(err==ERR_OK) {
-        //let's configure tls
+//     RELEASE_GIL();
+//     sock = _gs_socket_new(proto,1);  //request secure socket
+//     if(sock<0) {
+//         err = ERR_IOERROR_EXC;
+//         *res = MAKE_NONE();
+//     } else {
+//         *res = PSMALLINT_NEW(sock);
+//         err = ERR_OK;
+//     }
+//     if(err==ERR_OK) {
+//         //let's configure tls
 
-        //NOTE: ZERYNTH CERTS END with \0
-        if(options&_CERT_NONE) {
-           //NO CACERT VERIFICATION
-           amode = 0;
-        } else {
-            //REQUIRED OR OPTIONAL AUTH
-            if(certlen) {
-                //CACERT GIVEN
-                amode=1;
-                certlen--;
-            }else {
-                //NO CACERT
-                amode=1;
-            }
-        }
-        if(clilen) {
-            //load clicert
-            amode=2;
-            clilen--;
-        }
-        if(pkeylen){
-            //load clipkey
-            amode=2;
-            pkeylen--;
-        }
+//         //NOTE: ZERYNTH CERTS END with \0
+//         if(options&_CERT_NONE) {
+//            //NO CACERT VERIFICATION
+//            amode = 0;
+//         } else {
+//             //REQUIRED OR OPTIONAL AUTH
+//             if(certlen) {
+//                 //CACERT GIVEN
+//                 amode=1;
+//                 certlen--;
+//             }else {
+//                 //NO CACERT
+//                 amode=1;
+//             }
+//         }
+//         if(clilen) {
+//             //load clicert
+//             amode=2;
+//             clilen--;
+//         }
+//         if(pkeylen){
+//             //load clipkey
+//             amode=2;
+//             pkeylen--;
+//         }
 
-        if (_gs_socket_tls(sock,certbuf,certlen,clibuf,clilen,pkeybuf,pkeylen,amode)) {
-            //oops, close socket
-            _gs_socket_closing(sock);
-            err = ERR_IOERROR_EXC;
-        }
-    }
+//         if (_gs_socket_tls(sock,certbuf,certlen,clibuf,clilen,pkeybuf,pkeylen,amode)) {
+//             //oops, close socket
+//             _gs_socket_closing(sock);
+//             err = ERR_IOERROR_EXC;
+//         }
+//     }
 
-    ACQUIRE_GIL();
-    return err;
-#endif
-}
+//     ACQUIRE_GIL();
+//     return err;
+// #endif
+// }
 
 
 

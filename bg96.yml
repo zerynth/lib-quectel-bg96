@@ -1,0 +1,13 @@
+# configuration for bg96
+#
+#
+
+config:
+    # enable sockets
+    ZERYNTH_SOCKETS: true
+    ZERYNTH_SOCKETS_PYNATIVE: true
+    ZERYNTH_SOCKETS_PYNATIVE_CUSTOM_RESOLVE: true
+options:
+    ZERYNTH_SSL:
+        help: >
+            If enabled, the support for TLS/SSL socket will be available in the driver

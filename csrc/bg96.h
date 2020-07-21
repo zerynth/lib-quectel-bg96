@@ -385,6 +385,11 @@ int bg96_gzsock_shutdown(int s, int how);
 int bg96_gzsock_getaddrinfo(const char *node, const char* service, const struct addrinfo *hints, struct addrinfo **res);
 void bg96_gzsock_freeaddrinfo(struct addrinfo *ai_res);
 int bg96_gzsock_bind(int sock, const struct sockaddr *name, socklen_t namelen);
+int bg96_gzsock_ioctl(int s, long cmd, void *argp);
+int bg96_gzsock_inet_addr(const char *cp);
+int bg96_gzsock_inet_ntoa(struct in_addr *in);
+int bg96_gzsock_accept(int s, struct sockaddr *addr, socklen_t *addrlen);
+int bg96_gzsock_listen(int s, int backlog);
 
 typedef struct _gnssloc {
     uint8_t yy;

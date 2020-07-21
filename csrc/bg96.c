@@ -42,7 +42,7 @@
 
 #include "bg96.h"
 
-#if 0
+#if 1
 #define printf(...) vbl_printf_stdout(__VA_ARGS__)
 #define print_buffer(bf, ln) 	for(uint8_t i = 0; i < ln; i++) { \
 					printf("%c", bf[i]); \
@@ -770,6 +770,7 @@ void _gs_handle_urc(GSCmd* cmd)
 
     case GS_CMD_QIOPEN:
     case GS_CMD_QSSLOPEN:
+        printf("GS_CMD_QSSLOPEN\n");
         nargs = _gs_parse_command_arguments(buf, ebuf, "ii", &p0, &p1);
         if (nargs != 2)
             goto exit_err;
@@ -1500,6 +1501,7 @@ int _gs_socket_tls(int id, uint8_t* cacert, int cacertlen, uint8_t* clicert, int
 
 int _gs_socket_opened(int id, int success)
 {
+    printf("_gs_socket_opened %d %d\n", id, success);
     GSocket* sock;
     sock = &gs_sockets[id];
     if (success)
@@ -1567,6 +1569,7 @@ int _gs_socket_bind(int id, struct sockaddr_in* addr)
     } else {
         sock->bound = 1;
     }
+    printf("return from bind");
     return res;
 }
 
@@ -3030,6 +3033,31 @@ int bg96_gzsock_fcntl(int s, int cmd, int val) {
     return O_NONBLOCK;
 }
 
+int bg96_gzsock_ioctl(int s, long cmd, void *argp) {
+    printf("bg96_gzsock_ioctl\n");
+    return 0;
+}
+
+int bg96_gzsock_inet_addr(const char *cp) {
+    printf("bg96_gzsock_inet_addr\n");
+    return 0;
+}
+
+int bg96_gzsock_inet_ntoa(struct in_addr *in) {
+    printf("bg96_gzsock_inet_ntoa\n");
+    return 0;
+}
+
+int bg96_gzsock_accept(int s, struct sockaddr *addr, socklen_t *addrlen) {
+    printf("bg96_gzsock_accept\n");
+    return 0;
+}
+
+int bg96_gzsock_listen(int s, int backlog) {
+    printf("bg96_gzsock_listen\n");
+    return 0;
+}
+
 int bg96_gzsock_shutdown(int s, int how) {
     return 0;
 }
@@ -3057,6 +3085,7 @@ int bg96_gzsock_getaddrinfo(const char *node, const char* service, const struct 
 }
 
 void bg96_gzsock_freeaddrinfo(struct addrinfo *ai_res) {
+    printf("bg96_gzsock_freeaddrinfo \n");
     struct addrinfo *p;
     for (p = ai_res; p != NULL; p = ai_res->ai_next) {
         gc_free(p->ai_addr);
@@ -3065,8 +3094,9 @@ void bg96_gzsock_freeaddrinfo(struct addrinfo *ai_res) {
 }
 
 int bg96_gzsock_setsockopt(int sock_id, int level, int optname, const void *optval, socklen_t optlen) {
-    if(optname != SO_RCVTIMEO)
-        return -1;
+    printf("bg96_gzsock_setsockopt \n");
+    // if(optname != SO_RCVTIMEO)
+    //     return -1;
     // gTimeout = *((int*)optval);
     return 0;
 }
