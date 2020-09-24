@@ -42,7 +42,7 @@
 
 #include "bg96.h"
 
-#if 1
+#if 0
 #define printf(...) vbl_printf_stdout(__VA_ARGS__)
 #define print_buffer(bf, ln) 	for(uint8_t i = 0; i < ln; i++) { \
 					printf("%c", bf[i]); \
